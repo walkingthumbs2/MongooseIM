@@ -541,7 +541,11 @@ load_permanent_rooms(Host, ServerHost, Access, HistorySize, RoomShaper) ->
 start_new_room(Host, ServerHost, Access, Room,
 	       HistorySize, RoomShaper, From,
 	       Nick, DefRoomOpts) ->
-    case mnesia:dirty_read(muc_room, {Room, Host}) of
+	F = fun() ->
+			mnesia:read(muc_room, {Room, Host})
+		end,
+	{atomic, Result} = mnesia:transaction(F), 
+	case Result of
 	[] ->
 	    ?DEBUG("MUC: open new room '~s'~n", [Room]),
 	    mod_muc_room:start(Host, ServerHost, Access,
