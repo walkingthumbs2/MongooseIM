@@ -250,7 +250,13 @@ handle_call({create_instant, Room, From, Nick, Opts},
 		  Room, HistorySize,
 		  RoomShaper, From,
           Nick, [{instant, true}|NewOpts]),
-	register_room(Host, Room, Pid, []),
+%FIXME
+	F = fun() ->
+		register_room(Host, Room, Pid, 
+			mnesia:read(muc_room, {Room, Host}))
+	end,
+	%% TODO handle transaction failure
+	{atomic, Result} = mnesia:transaction(F),
     {reply, ok, State}.
 
 %%--------------------------------------------------------------------
@@ -418,7 +424,7 @@ handle_db_room_data(Room, From, To, State = #state{ host = Host,
 
 	F = fun() ->
 		register_room(Host, Room, Pid, 
-			mnesia:read(muc_room, {Room, Host}))
+			mnesia:read(muc_online_room, {Room, Host}))
 	end,
 	%% TODO handle transaction failure
 	{atomic, Result} = mnesia:transaction(F),
@@ -434,14 +440,13 @@ route_to_room(Room, {From, To, {xmlelement, <<"presence">>, _Body, Attrs }
 		<<>> ->
 		%% At this point Result contains a value of {[exists|new_local|new_global], Pid}
 		%% Pid - Pid of the room's process on this node
-			Result = handle_db_room_data(Room, From, To, State, 
-				local_room_process(mnesia:dirty_read(muc_room, {Room, Host}))),
-			{_, Pid} = Result,
+			{_, Pid} = handle_db_room_data(Room, From, To, State, 
+				local_room_process(mnesia:dirty_read(muc_online_room, {Room, Host}))),
 			{_, _, Nick} = jlib:jid_tolower(To),
 			mod_muc_room:route(Pid, From, Nick, Packet);
 			%route_to_new_room(Result, Room, Packet, State);
 		_ ->
-			case mnesia:dirty_read(muc_room, {Room, Host}) of
+			case mnesia:dirty_read(muc_online_room, {Room, Host}) of
 				[] ->
 					route_to_nonexistent_room(Room, Routed, State);
 				[R] ->
@@ -454,7 +459,7 @@ route_to_room(Room, {From, To, {xmlelement, <<"presence">>, _Body, Attrs }
 	end;
 
 route_to_room(Room, {From, To, Packet} = Routed, #state{host=Host} = State) ->
-	case mnesia:dirty_read(muc_room, {Room, Host}) of
+	case mnesia:dirty_read(muc_online_room, {Room, Host}) of
 		[] ->
 			route_to_nonexistent_room(Room, Routed, State);
 		[R] ->
