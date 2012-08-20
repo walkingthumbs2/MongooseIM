@@ -185,6 +185,7 @@ init([Host, Opts]) ->
 			 {attributes, record_info(fields, muc_registered)}]),
     mnesia:create_table(muc_online_room,
 			[{ram_copies, [node()]},
+			 {type, bag},
 			 {attributes, record_info(fields, muc_online_room)}]),
     mnesia:add_table_copy(muc_online_room, node(), ram_copies),
     catch ets:new(muc_online_users, [bag, named_table, public, {keypos, 2}]),
@@ -249,7 +250,7 @@ handle_call({create_instant, Room, From, Nick, Opts},
 		  Room, HistorySize,
 		  RoomShaper, From,
           Nick, [{instant, true}|NewOpts]),
-    register_room(Host, Room, Pid),
+	register_room(Host, Room, Pid, []),
     {reply, ok, State}.
 
 %%--------------------------------------------------------------------
@@ -349,28 +350,127 @@ route_by_privilege({From, To, Packet} = Routed,
     end.
 
 
-route_to_room(<<>>, {_,To,_} = Routed, State) ->
-    {_, _, Nick} = jlib:jid_tolower(To),
-    route_by_nick(Nick, Routed, State);
 
-route_to_room(Room, {From,To,Packet} = Routed, #state{host=Host} = State) ->
-    case mnesia:dirty_read(muc_online_room, {Room, Host}) of
-	[] ->
-	    route_to_nonexistent_room(Room, Routed, State);
-	[R] ->
-	    Pid = R#muc_online_room.pid,
-	    ?DEBUG("MUC: send to process ~p~n", [Pid]),
-	    {_, _, Nick} = jlib:jid_tolower(To),
-	    mod_muc_room:route(Pid, From, Nick, Packet),
-	    ok
+
+
+
+%% returns the pid of the local room process
+local_room_process([]) ->
+	no_room;
+
+local_room_process(ResultList) ->
+	lists:foldl(fun(X, Acc) ->
+					#muc_online_room{pid = Pid} = X, 
+					case node(Pid) == node() of
+						true ->
+							Pid;
+						false ->
+							Acc
+					end
+				end, no_local_process, ResultList).
+
+register_room_local(Host, Room, Pid, no_local_process) ->
+	ok = mnesia:write(#muc_online_room{name_host = {Room, Host},
+					      pid = Pid}),
+	{new_local, Pid};
+
+register_room_local(Host, Room, Pid, ExistingPid) ->
+	{exists, Pid, ExistingPid}.
+
+register_room(Host, Room, Pid, []) ->
+?INFO_MSG("sanity check", []),
+	ok = mnesia:write(#muc_online_room{name_host = {Room, Host},
+					      pid = Pid}),
+?INFO_MSG("pass", []),
+	{new_global, Pid};
+
+register_room(Host, Room, Pid, ResultList) ->
+	%% TODO check of the race conditions are possible on the same node.
+	%% if not, get rid of the local_rool_process invocation here
+	register_room_local(Host, Room, Pid, local_room_process(ResultList)).
+
+finalize_room_creation({exists, Pid, ExistingPid}) ->
+%% TODO: log destroying the redundant process properly (in the mod_muc_room module)
+	Pid!{stop, redundant},	
+	{exists, ExistingPid};
+
+finalize_room_creation(Result) ->
+	Result.
+
+%% FIXME - find a more sensible name for this function
+%% Create a new room, save its Pid within a transaction
+%% Dirty read might state that the room does not exist or it does not have a local process
+%% one way or the other we have to check this again within a transaction.
+%% TODO: check if the user is allowed to create a room
+handle_db_room_data(Room, From, To, State, Pid) when is_pid(Pid)  -> 
+	{exists, Pid};
+
+handle_db_room_data(Room, From, To, State = #state{ host = Host,
+	server_host = ServerHost, access = Access = {_, AccessCreate, _, _}}, _PidCheckResult) ->
+
+	HistorySize = State#state.history_size,
+	RoomShaper  = State#state.room_shaper,
+	DefRoomOpts = State#state.default_room_opts,
+	{_, _, Nick} = jlib:jid_tolower(To),
+	{ok, Pid} = start_new_room(Host, ServerHost, Access, Room,
+							HistorySize, RoomShaper, From,
+					Nick, DefRoomOpts),
+
+	F = fun() ->
+		register_room(Host, Room, Pid, 
+			mnesia:read(muc_room, {Room, Host}))
+	end,
+	%% TODO handle transaction failure
+	{atomic, Result} = mnesia:transaction(F),
+
+	finalize_room_creation(Result).
+
+%% TODO take the rooms state into consideration
+%% saving initial state in the database is not required, make it 'locked' at startup
+route_to_room(Room, {From, To, {xmlelement, <<"presence">>, _Body, Attrs } 
+					= Packet} = Routed, #state{host=Host} = State) ->
+    Type = xml:get_attr_s(<<"type">>, Attrs),
+	case Type of
+		<<>> ->
+		%% At this point Result contains a value of {[exists|new_local|new_global], Pid}
+		%% Pid - Pid of the room's process on this node
+			Result = handle_db_room_data(Room, From, To, State, 
+				local_room_process(mnesia:dirty_read(muc_room, {Room, Host}))),
+			{_, Pid} = Result,
+			{_, _, Nick} = jlib:jid_tolower(To),
+			mod_muc_room:route(Pid, From, Nick, Packet);
+			%route_to_new_room(Result, Room, Packet, State);
+		_ ->
+			case mnesia:dirty_read(muc_room, {Room, Host}) of
+				[] ->
+					route_to_nonexistent_room(Room, Routed, State);
+				[R] ->
+					Pid = R#muc_online_room.pid,
+					?DEBUG("MUC: send to process ~p~n", [Pid]),
+					{_, _, Nick} = jlib:jid_tolower(To),
+					mod_muc_room:route(Pid, From, Nick, Packet),
+					ok
+			end
+	end;
+
+route_to_room(Room, {From, To, Packet} = Routed, #state{host=Host} = State) ->
+	case mnesia:dirty_read(muc_room, {Room, Host}) of
+		[] ->
+			route_to_nonexistent_room(Room, Routed, State);
+		[R] ->
+			Pid = R#muc_online_room.pid,
+			?DEBUG("MUC: send to process ~p~n", [Pid]),
+			{_, _, Nick} = jlib:jid_tolower(To),
+			mod_muc_room:route(Pid, From, Nick, Packet),
+			ok
     end.
-
 
 route_to_nonexistent_room(Room, {From, To, Packet},
 			  #state{host=Host} = State) ->
     {xmlelement, Name, Attrs, _} = Packet,
     Type = xml:get_attr_s(<<"type">>, Attrs),
     case {Name, Type} of
+	%% this piece of code is redundant and will be gone soon
 	{<<"presence">>, <<>>} ->
 	    ServerHost = State#state.server_host,
 	    Access = State#state.access,
@@ -385,7 +485,7 @@ route_to_nonexistent_room(Room, {From, To, Packet},
 		    {ok, Pid} = start_new_room(Host, ServerHost, Access, Room,
 			                       HistorySize, RoomShaper, From,
 					       Nick, DefRoomOpts),
-		    register_room(Host, Room, Pid),
+			register_room(Host, Room, Pid, []),
 		    mod_muc_room:route(Pid, From, Nick, Packet),
 		    ok;
 		false ->
@@ -531,7 +631,7 @@ load_permanent_rooms(Host, ServerHost, Access, HistorySize, RoomShaper) ->
 					    HistorySize,
 					    RoomShaper,
 					    R#muc_room.opts),
-			      register_room(Host, Room, Pid);
+					register_room(Host, Room, Pid, []);
 			  _ ->
 			      ok
 		      end
@@ -559,12 +659,6 @@ start_new_room(Host, ServerHost, Access, Room,
 			       RoomShaper, Opts)
     end.
 
-register_room(Host, Room, Pid) ->
-    F = fun() ->
-		mnesia:write(#muc_online_room{name_host = {Room, Host},
-					      pid = Pid})
-	end,
-    mnesia:transaction(F).
 
 
 iq_disco_info(Lang) ->

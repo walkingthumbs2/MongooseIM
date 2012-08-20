@@ -586,6 +586,9 @@ handle_info({captcha_failed, From}, normal_state, StateData) ->
                StateData
            end,
     {next_state, normal_state, NewState};
+handle_info({stop, redundant}, initial_state, StateData) ->
+    add_to_log(room_existence, stopped, StateData),
+    {stop, normal, StateData};
 handle_info(_Info, StateName, StateData) ->
     {next_state, StateName, StateData}.
 
