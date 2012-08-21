@@ -55,7 +55,7 @@
 
 
 -record(muc_room, {name_host, opts}).
--record(muc_online_room, {name_host, pid}).
+-record(muc_online_room, {name_host, pid, state}).
 -record(muc_registered, {us_host, nick}).
 
 -record(state, {host,
@@ -284,11 +284,12 @@ handle_info({route, From, To, Packet}, State) ->
     end,
     {noreply, State};
 handle_info({room_destroyed, RoomHost, Pid}, State) ->
+?INFO_MSG("before", [mnesia:dirty_read(muc_online_room, RoomHost)]),
     F = fun() ->
-		mnesia:delete_object(#muc_online_room{name_host = RoomHost,
-						      pid = Pid})
+		mnesia:delete({muc_online_room,  RoomHost})
 	end,
     mnesia:transaction(F),
+?INFO_MSG("after", [mnesia:dirty_read(muc_online_room, RoomHost)]),
     {noreply, State};
 handle_info({mnesia_system_event, {mnesia_down, Node}}, State) ->
     clean_table_from_bad_node(Node),
@@ -362,25 +363,26 @@ route_by_privilege({From, To, Packet} = Routed,
 
 %% returns the pid of the local room process
 local_room_process([]) ->
-	no_room;
+	{no_room, no_state};
 
 local_room_process(ResultList) ->
 	lists:foldl(fun(X, Acc) ->
-					#muc_online_room{pid = Pid} = X, 
+					#muc_online_room{pid = Pid, state = State} = X, 
 					case node(Pid) == node() of
 						true ->
-							Pid;
+							{Pid, State};
 						false ->
-							Acc
+							{AccPid, AccState} = Acc,
+							{AccPid, State}
 					end
-				end, no_local_process, ResultList).
+				end, {no_local_process, placeholder}, ResultList).
 
-register_room_local(Host, Room, Pid, no_local_process) ->
+register_room_local(Host, Room, Pid, {no_local_process, StateName}) ->
 	ok = mnesia:write(#muc_online_room{name_host = {Room, Host},
 					      pid = Pid}),
 	{new_local, Pid};
 
-register_room_local(Host, Room, Pid, ExistingPid) ->
+register_room_local(Host, Room, Pid, {ExistingPid, StateName}) ->
 	{exists, Pid, ExistingPid}.
 
 register_room(Host, Room, Pid, []) ->
@@ -408,7 +410,7 @@ finalize_room_creation(Result) ->
 %% Dirty read might state that the room does not exist or it does not have a local process
 %% one way or the other we have to check this again within a transaction.
 %% TODO: check if the user is allowed to create a room
-handle_db_room_data(Room, From, To, State, Pid) when is_pid(Pid)  -> 
+handle_db_room_data(Room, From, To, State, {Pid, StateName}) when is_pid(Pid)  -> 
 	{exists, Pid};
 
 handle_db_room_data(Room, From, To, State = #state{ host = Host,
