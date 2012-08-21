@@ -34,24 +34,13 @@ eunit: rebar
 rel: rebar deps
 	./rebar compile generate -f
 
-devrel: $(DEVNODES)
+devrel: rebar deps compile s2s-node1 s2s-node2 muc-node1 muc-node2
 
-testrel: $(DEVNODES) $(TESTNODES)
-
-$(DEVNODES) $(TESTNODES): rebar deps compile deps_dev
-	@echo "building $@"
-	(cd rel && ../rebar generate -f target_dir=../dev/ejabberd_$@ overlay_vars=./reltool_vars/$@_vars.config)
-	cp apps/ejabberd/src/*.erl dev/ejabberd_$@/lib/ejabberd-2.1.8/ebin/
-ifeq ($(shell uname), Linux)
-	cp -R `dirname $(shell readlink -f $(shell which erl))`/../lib/tools-* dev/ejabberd_$@/lib/
-else
-	cp -R `which erl`/../../lib/tools-* dev/ejabberd_$@/lib/
-endif
-
-deps_dev:
+s2s-node1 s2s-node2 muc-node1 muc-node2:
 	mkdir -p dev
-	cp rel/files/test_cert.pem /tmp/server.pem
-	cp rel/files/sample_external_auth.py /tmp
+	(cd rel && ../rebar generate -f target_dir=../dev/$@ overlay_vars=./reltool_vars/$@-vars.config)
+	cp apps/ejabberd/src/*.erl dev/$@/lib/ejabberd-2.1.8/ebin/
+	cp -R `which erl`/../../lib/tools-* dev/$@/lib/
 
 devclean:
 	rm -rf dev/*
