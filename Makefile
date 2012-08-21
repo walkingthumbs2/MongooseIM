@@ -33,12 +33,13 @@ eunit: rebar
 rel: rebar deps
 	./rebar compile generate -f
 
-devrel: rebar deps compile
+devrel: rebar deps compile s2s-node1 s2s-node2 muc-node1 muc-node2
+
+s2s-node1 s2s-node2 muc-node1 muc-node2:
 	mkdir -p dev
-	(cd rel && ../rebar generate -f target_dir=../dev/ejabberd overlay_vars=./reltool_vars/node1_vars.config)
-	cp apps/ejabberd/src/*.erl dev/ejabberd/lib/ejabberd-2.1.8/ebin/
-	cp -R `which erl`/../../lib/tools-* dev/ejabberd/lib/
-	(cd rel && ../rebar generate -f target_dir=../dev/ejabberd2 overlay_vars=./reltool_vars/node2_vars.config)
+	(cd rel && ../rebar generate -f target_dir=../dev/$@ overlay_vars=./reltool_vars/$@-vars.config)
+	cp apps/ejabberd/src/*.erl dev/$@/lib/ejabberd-2.1.8/ebin/
+	cp -R `which erl`/../../lib/tools-* dev/$@/lib/
 
 devclean:
 	rm -rf dev/*
