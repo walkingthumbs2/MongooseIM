@@ -217,22 +217,51 @@ locked_error({route, From, ToNick, {xmlelement, _Name, Attrs, _} = Packet},
                           From, Err),
     {next_state, NextState, StateData}.
 
+process_presence_activity_dependent(From, Nick, Packet, StateData, NewState) ->
+	Activity = get_user_activity(From, StateData),
+	Now = now_to_usec(now()),
+	MinPresenceInterval =
+		trunc(gen_mod:get_module_opt(StateData#state.server_host,
+									mod_muc, min_presence_interval, 0)
+			* 1000000),
+    if
+    (Now >= Activity#activity.presence_time + MinPresenceInterval) and
+    (Activity#activity.presence == undefined) ->
+        NewActivity = Activity#activity{presence_time = Now},
+        StateData1 = store_user_activity(From, NewActivity, StateData),
+		case Result = process_presence(From, Nick, Packet, StateData1) of
+			{stop, _, _} -> Result;
+			{next_state, _State, StateData2} -> {next_state, NewState, StateData2}
+		end;
+    true ->
+        if
+        Activity#activity.presence == undefined ->
+            Interval = (Activity#activity.presence_time +
+                MinPresenceInterval - Now) div 1000,
+            erlang:send_after(
+              Interval, self(), {process_user_presence, From});
+        true ->
+            ok
+        end,
+        NewActivity = Activity#activity{presence = {Nick, Packet}},
+        StateData1 = store_user_activity(From, NewActivity, StateData),
+        {next_state, NewState, StateData1}
+    end.
+
 %% Receive the room-creating Stanza.
 %% Will crash if any other stanza is received in this state.
 initial_state({route, From, ToNick,
               {xmlelement, <<"presence">>, Attrs, _Body} = Presence}, StateData) ->
-    %% this should never happen so crash if it does
     <<>> = xml:get_attr_s(<<"type">>, Attrs),
     case  xml:get_path_s(Presence,[{elem, <<"x">>}, {attr, <<"xmlns">>}]) of
         ?NS_MUC ->
             %% FIXME
             add_to_log(room_existence, started, StateData),
-            process_presence(From, ToNick, Presence, StateData, locked_state);
-            %% The fragment of normal_state with Activity that used to do this - how does that work?
-            %% Seems to work without it
+            process_presence_activity_dependent(From, ToNick, Presence, StateData, locked_state);
+
         <<>> ->
             %% groupchat 1.0 user, straight to normal_state
-            process_presence(From, ToNick, Presence, StateData)
+            process_presence_activity_dependent(From, ToNick, Presence, StateData, normal_state)
         end.
 
 is_query_allowed(Query) ->
@@ -322,7 +351,7 @@ locked_state({route, From, ToNick,
             %% Will let the owner leave and destroy the room if it's not persistant
             %% The rooms are not presistent by default, but just to be safe...
             StateData1 = StateData#state{config = (StateData#state.config)#config{persistent = false}},
-            process_presence(From, ToNick, Presence, StateData1, locked_state);
+            process_presence_activity_dependent(From, ToNick, Presence, StateData1, locked_state);
         _ ->
             locked_error(Call, locked_state, StateData)
     end;
@@ -750,13 +779,6 @@ get_participant_data(From, StateData) ->
         {FromNick, Role};
     error ->
         {<<>>, moderator}
-    end.
-
-%FIXME
-process_presence(From, ToNick, Presence, StateData, NewState) ->
-    case process_presence(From, ToNick, Presence, StateData) of
-        {next_state, normal_state, StateData1} -> {next_state, NewState, StateData1};
-        {stop, normal, _StateData2} = X -> X
     end.
 
 process_presence(From, Nick, {xmlelement, <<"presence">>, Attrs, _Els} = Packet,
