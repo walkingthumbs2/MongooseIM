@@ -386,10 +386,8 @@ register_room_local(Host, Room, Pid, {ExistingPid, StateName}) ->
 	{exists, Pid, ExistingPid}.
 
 register_room(Host, Room, Pid, []) ->
-?INFO_MSG("sanity check", []),
 	ok = mnesia:write(#muc_online_room{name_host = {Room, Host},
 					      pid = Pid}),
-?INFO_MSG("pass", []),
 	{new_global, Pid};
 
 register_room(Host, Room, Pid, ResultList) ->
@@ -410,12 +408,13 @@ finalize_room_creation(Result) ->
 %% Dirty read might state that the room does not exist or it does not have a local process
 %% one way or the other we have to check this again within a transaction.
 %% TODO: check if the user is allowed to create a room
-handle_db_room_data(Room, From, To, State, {Pid, StateName}) when is_pid(Pid)  -> 
+handle_db_room_data(Room, From, To, State, {Pid, StateName}, _CanCreateRoom) when is_pid(Pid)  -> 
 	{exists, Pid};
 
-handle_db_room_data(Room, From, To, State = #state{ host = Host,
-	server_host = ServerHost, access = Access = {_, AccessCreate, _, _}}, _PidCheckResult) ->
-
+handle_db_room_data(Room, From, To, 
+					State = #state{ host = Host, server_host = ServerHost,
+									access = Access = {_, AccessCreate, _, _}},
+					_PidCheckResult, true) ->
 	HistorySize = State#state.history_size,
 	RoomShaper  = State#state.room_shaper,
 	DefRoomOpts = State#state.default_room_opts,
@@ -430,27 +429,54 @@ handle_db_room_data(Room, From, To, State = #state{ host = Host,
 	end,
 	%% TODO handle transaction failure
 	{atomic, Result} = mnesia:transaction(F),
+	finalize_room_creation(Result);
 
-	finalize_room_creation(Result).
+handle_db_room_data(Room, From, To, State, _PidCheckResult, false) ->
+	{cant_create, no_pid}.
 
-%% TODO take the rooms state into consideration
-%% saving initial state in the database is not required, make it 'locked' at startup
+no_such_room(From, To, Packet) ->
+	{xmlelement, _Name, Attrs, _} = Packet,
+	Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
+	ErrText = <<"Conference room does not exist">>,
+	Err = jlib:make_error_reply(
+		Packet, ?ERRT_ITEM_NOT_FOUND(Lang, ErrText)),
+	ejabberd_router:route(To, From, Err).
+
+initialize_room({cant_create, no_pid}, From, To,
+				{xmlelement, _Name, Attrs, _} = Packet) ->
+	Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
+	ErrText = <<"Room creation is denied by service policy">>,
+	Err = jlib:make_error_reply(
+		Packet, ?ERRT_NOT_ALLOWED(Lang, ErrText)),
+	ejabberd_router:route(To, From, Err);
+
+initialize_room({_IsRoomNew, Pid}, From, To, Packet) ->
+	{_, _, Nick} = jlib:jid_tolower(To),
+	mod_muc_room:route(Pid, From, Nick, Packet).
+
+route_to_room(<<>>, {_, To, _} = Routed, State) ->
+	{_, _, Nick} = jlib:jid_tolower(To),
+	route_by_nick(Nick, Routed, State);
+
 route_to_room(Room, {From, To, {xmlelement, <<"presence">>, _Body, Attrs } 
-					= Packet} = Routed, #state{host=Host} = State) ->
+					= Packet} = Routed, 
+					State = #state{ host = Host, server_host = ServerHost,
+									access = Access = {_, AccessCreate, _, _}}) ->
     Type = xml:get_attr_s(<<"type">>, Attrs),
 	case Type of
 		<<>> ->
-		%% At this point Result contains a value of {[exists|new_local|new_global], Pid}
+		%% At this point Result contains a value of {[exists|new_local|new_global|cant_create],Pid}
 		%% Pid - Pid of the room's process on this node
-			{_, Pid} = handle_db_room_data(Room, From, To, State, 
-				local_room_process(mnesia:dirty_read(muc_online_room, {Room, Host}))),
-			{_, _, Nick} = jlib:jid_tolower(To),
-			mod_muc_room:route(Pid, From, Nick, Packet);
-			%route_to_new_room(Result, Room, Packet, State);
+			Result = handle_db_room_data(Room, From, To, State, 
+				local_room_process(mnesia:dirty_read(muc_online_room, {Room, Host})), 
+				check_user_can_create_room(ServerHost, AccessCreate,
+ 					    From, Room)),
+			initialize_room(Result, From, To, Packet),
+			ok;
 		_ ->
 			case mnesia:dirty_read(muc_online_room, {Room, Host}) of
 				[] ->
-					route_to_nonexistent_room(Room, Routed, State);
+					no_such_room(From, To, Packet);
 				[R] ->
 					Pid = R#muc_online_room.pid,
 					?DEBUG("MUC: send to process ~p~n", [Pid]),
@@ -463,7 +489,7 @@ route_to_room(Room, {From, To, {xmlelement, <<"presence">>, _Body, Attrs }
 route_to_room(Room, {From, To, Packet} = Routed, #state{host=Host} = State) ->
 	case mnesia:dirty_read(muc_online_room, {Room, Host}) of
 		[] ->
-			route_to_nonexistent_room(Room, Routed, State);
+			no_such_room(From, To, Packet);
 		[R] ->
 			Pid = R#muc_online_room.pid,
 			?DEBUG("MUC: send to process ~p~n", [Pid]),
@@ -472,43 +498,38 @@ route_to_room(Room, {From, To, Packet} = Routed, #state{host=Host} = State) ->
 			ok
     end.
 
-route_to_nonexistent_room(Room, {From, To, Packet},
-			  #state{host=Host} = State) ->
-    {xmlelement, Name, Attrs, _} = Packet,
-    Type = xml:get_attr_s(<<"type">>, Attrs),
-    case {Name, Type} of
-	%% this piece of code is redundant and will be gone soon
-	{<<"presence">>, <<>>} ->
-	    ServerHost = State#state.server_host,
-	    Access = State#state.access,
-	    {_, AccessCreate, _, _} = Access,
-	    case check_user_can_create_room(ServerHost, AccessCreate,
-					    From, Room) of
-		true ->
-		    HistorySize = State#state.history_size,
-		    RoomShaper  = State#state.room_shaper,
-		    DefRoomOpts = State#state.default_room_opts,
-		    {_, _, Nick} = jlib:jid_tolower(To),
-		    {ok, Pid} = start_new_room(Host, ServerHost, Access, Room,
-			                       HistorySize, RoomShaper, From,
-					       Nick, DefRoomOpts),
-			register_room(Host, Room, Pid, []),
-		    mod_muc_room:route(Pid, From, Nick, Packet),
-		    ok;
-		false ->
-		    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
-		    ErrText = <<"Room creation is denied by service policy">>,
-		    Err = jlib:make_error_reply(
-			    Packet, ?ERRT_NOT_ALLOWED(Lang, ErrText)),
-		    ejabberd_router:route(To, From, Err)
-	    end;
-	_ ->
-	    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
-	    ErrText = <<"Conference room does not exist">>,
-	    Err = jlib:make_error_reply(
-		    Packet, ?ERRT_ITEM_NOT_FOUND(Lang, ErrText)),
-	    ejabberd_router:route(To, From, Err)
-    end.
+%% route_to_nonexistent_room(Room, {From, To, Packet},
+%% 			  #state{host=Host} = State) ->
+%%     {xmlelement, Name, Attrs, _} = Packet,
+%%     Type = xml:get_attr_s(<<"type">>, Attrs),
+%%     case {Name, Type} of
+%% 	%% this piece of code is redundant and will be gone soon
+%% 	{<<"presence">>, <<>>} ->
+%% 	    ServerHost = State#state.server_host,
+%% 	    Access = State#state.access,
+%% 	    {_, AccessCreate, _, _} = Access,
+%% 	    case check_user_can_create_room(ServerHost, AccessCreate,
+%% 					    From, Room) of
+%% 		true ->
+%% 		    HistorySize = State#state.history_size,
+%% 		    RoomShaper  = State#state.room_shaper,
+%% 		    DefRoomOpts = State#state.default_room_opts,
+%% 		    {_, _, Nick} = jlib:jid_tolower(To),
+%% 		    {ok, Pid} = start_new_room(Host, ServerHost, Access, Room,
+%% 			                       HistorySize, RoomShaper, From,
+%% 					       Nick, DefRoomOpts),
+%% 			register_room(Host, Room, Pid, []),
+%% 		    mod_muc_room:route(Pid, From, Nick, Packet),
+%% 		    ok;
+%% 		false ->
+%% 		    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
+%% 		    ErrText = <<"Room creation is denied by service policy">>,
+%% 		    Err = jlib:make_error_reply(
+%% 			    Packet, ?ERRT_NOT_ALLOWED(Lang, ErrText)),
+%% 		    ejabberd_router:route(To, From, Err)
+%% 	    end;
+%% 	_ ->
+%%     end.
 
 
 route_by_nick(<<>>, {_,_,Packet} = Routed, State) ->
