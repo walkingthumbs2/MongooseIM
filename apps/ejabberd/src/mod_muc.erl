@@ -395,10 +395,12 @@ register_room(Host, Room, Pid, ResultList) ->
 	%% if not, get rid of the local_rool_process invocation here
 	register_room_local(Host, Room, Pid, local_room_process(ResultList)).
 
+%% Race conditions - the room was alredy created
 finalize_room_creation({exists, Pid, ExistingPid}) ->
 %% TODO: log destroying the redundant process properly (in the mod_muc_room module)
 	Pid!{stop, redundant},	
 	{exists, ExistingPid};
+
 
 finalize_room_creation(Result) ->
 	Result.
@@ -407,14 +409,30 @@ finalize_room_creation(Result) ->
 %% Create a new room, save its Pid within a transaction
 %% Dirty read might state that the room does not exist or it does not have a local process
 %% one way or the other we have to check this again within a transaction.
-%% TODO: check if the user is allowed to create a room
+%%
+%% handle_db_room_data(Room, From, To, 
+%% 					  {Pid, StateName}|{no_room, no_state}|{no_local_process, StateName}) ->
+%% 					  {new_local, Pid}|{new_global, Pid}|{exists, Pid}|{cant_create, no_pid}|{locked, no_pid} 
+%% 					  
+%% 
+%% local room process exists
 handle_db_room_data(Room, From, To, State, {Pid, StateName}, _CanCreateRoom) when is_pid(Pid)  -> 
 	{exists, Pid};
 
+%% no room process exists and the user is not allowed to create one
+handle_db_room_data(Room, From, To, State, {no_room, no_state}, false) ->
+	{cant_create, no_pid};
+
+%% no local process exists, the global one is locked.
+handle_db_room_data(Room, From, To, State, {no_local_process, locked}, false) ->
+	{locked, no_pid};
+
+%% local process does not exist and should be created
+%% (it might be the first one for this room)
 handle_db_room_data(Room, From, To, 
 					State = #state{ host = Host, server_host = ServerHost,
 									access = Access = {_, AccessCreate, _, _}},
-					_PidCheckResult, true) ->
+					_PidCheckResult, _CanCreateRoom) ->
 	HistorySize = State#state.history_size,
 	RoomShaper  = State#state.room_shaper,
 	DefRoomOpts = State#state.default_room_opts,
@@ -429,10 +447,7 @@ handle_db_room_data(Room, From, To,
 	end,
 	%% TODO handle transaction failure
 	{atomic, Result} = mnesia:transaction(F),
-	finalize_room_creation(Result);
-
-handle_db_room_data(Room, From, To, State, _PidCheckResult, false) ->
-	{cant_create, no_pid}.
+	finalize_room_creation(Result).
 
 no_such_room(From, To, Packet) ->
 	{xmlelement, _Name, Attrs, _} = Packet,
@@ -450,6 +465,14 @@ initialize_room({cant_create, no_pid}, From, To,
 		Packet, ?ERRT_NOT_ALLOWED(Lang, ErrText)),
 	ejabberd_router:route(To, From, Err);
 
+initialize_room({locked, no_pid}, From, To,
+				{xmlelement, _Name, Attrs, _} = Packet) ->
+    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
+	ErrText = <<"This room is locked">>,
+    Err = jlib:make_error_reply(Packet, ?ERRT_ITEM_NOT_FOUND(Lang, ErrText)),
+	ejabberd_router:route(To, From, Err);
+
+%% if the room is new adjust it here
 initialize_room({_IsRoomNew, Pid}, From, To, Packet) ->
 	{_, _, Nick} = jlib:jid_tolower(To),
 	mod_muc_room:route(Pid, From, Nick, Packet).
