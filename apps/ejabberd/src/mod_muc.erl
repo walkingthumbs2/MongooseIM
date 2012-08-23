@@ -458,7 +458,7 @@ route_to_room(<<>>, {_, To, _} = Routed, State) ->
 	{_, _, Nick} = jlib:jid_tolower(To),
 	route_by_nick(Nick, Routed, State);
 
-route_to_room(Room, {From, To, {xmlelement, <<"presence">>, _Body, Attrs } 
+route_to_room(Room, {From, To, {xmlelement, <<"presence">>, Attrs, _Body } 
 					= Packet} = Routed, 
 					State = #state{ host = Host, server_host = ServerHost,
 									access = Access = {_, AccessCreate, _, _}}) ->
