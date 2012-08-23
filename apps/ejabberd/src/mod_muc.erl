@@ -284,12 +284,10 @@ handle_info({route, From, To, Packet}, State) ->
     end,
     {noreply, State};
 handle_info({room_destroyed, RoomHost, Pid}, State) ->
-?INFO_MSG("before", [mnesia:dirty_read(muc_online_room, RoomHost)]),
     F = fun() ->
 		mnesia:delete({muc_online_room,  RoomHost})
 	end,
     mnesia:transaction(F),
-?INFO_MSG("after", [mnesia:dirty_read(muc_online_room, RoomHost)]),
     {noreply, State};
 handle_info({mnesia_system_event, {mnesia_down, Node}}, State) ->
     clean_table_from_bad_node(Node),
@@ -346,7 +344,7 @@ route_by_privilege({From, To, Packet} = Routed,
     case acl:match_rule(ServerHost, AccessRoute, From) of
 	allow ->
 	    {Room, _, _} = jlib:jid_tolower(To),
-	    route_to_room(Room, Routed, State);
+	    route_or_create_room(Room, Routed, State);
 	_ ->
 	    {xmlelement, _Name, Attrs, _Els} = Packet,
 	    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
@@ -358,7 +356,23 @@ route_by_privilege({From, To, Packet} = Routed,
 
 
 
+%% Returns the pid of a local room process.
+%% If there is none, any room process
+room_process([]) ->
+	no_room;
 
+%% FIXME there has to be a better way of doing this
+room_process(ResultList) ->
+	{Local, NonLocal} = lists:partition(fun (#muc_online_room{pid = Pid, state = State}) ->
+				        node(Pid) == node()
+					end, ResultList),
+	if 
+		Local == [] ->
+			[#muc_online_room{pid = Pid2} | Tail] = NonLocal;
+		true ->
+			[#muc_online_room{pid = Pid2}] = Local
+	end,
+	Pid2.
 
 
 %% returns the pid of the local room process
@@ -477,11 +491,22 @@ initialize_room({_IsRoomNew, Pid}, From, To, Packet) ->
 	{_, _, Nick} = jlib:jid_tolower(To),
 	mod_muc_room:route(Pid, From, Nick, Packet).
 
-route_to_room(<<>>, {_, To, _} = Routed, State) ->
+route_to_room(Room, {From, To, Packet} = Routed, #state{host=Host} = State) ->
+	case room_process(mnesia:dirty_read(muc_online_room, {Room, Host})) of
+		no_room ->
+			no_such_room(From, To, Packet);
+		Pid ->
+			?DEBUG("MUC: send to process ~p~n", [Pid]),
+			{_, _, Nick} = jlib:jid_tolower(To),
+			mod_muc_room:route(Pid, From, Nick, Packet),
+			ok
+	end.
+
+route_or_create_room(<<>>, {_, To, _} = Routed, State) ->
 	{_, _, Nick} = jlib:jid_tolower(To),
 	route_by_nick(Nick, Routed, State);
 
-route_to_room(Room, {From, To, {xmlelement, <<"presence">>, Attrs, _Body } 
+route_or_create_room(Room, {From, To, {xmlelement, <<"presence">>, Attrs, _Body } 
 					= Packet} = Routed, 
 					State = #state{ host = Host, server_host = ServerHost,
 									access = Access = {_, AccessCreate, _, _}}) ->
@@ -497,29 +522,11 @@ route_to_room(Room, {From, To, {xmlelement, <<"presence">>, Attrs, _Body }
 			initialize_room(Result, From, To, Packet),
 			ok;
 		_ ->
-			case mnesia:dirty_read(muc_online_room, {Room, Host}) of
-				[] ->
-					no_such_room(From, To, Packet);
-				[R] ->
-					Pid = R#muc_online_room.pid,
-					?DEBUG("MUC: send to process ~p~n", [Pid]),
-					{_, _, Nick} = jlib:jid_tolower(To),
-					mod_muc_room:route(Pid, From, Nick, Packet),
-					ok
-			end
+			route_to_room(Room, Routed, State)
 	end;
 
-route_to_room(Room, {From, To, Packet} = Routed, #state{host=Host} = State) ->
-	case mnesia:dirty_read(muc_online_room, {Room, Host}) of
-		[] ->
-			no_such_room(From, To, Packet);
-		[R] ->
-			Pid = R#muc_online_room.pid,
-			?DEBUG("MUC: send to process ~p~n", [Pid]),
-			{_, _, Nick} = jlib:jid_tolower(To),
-			mod_muc_room:route(Pid, From, Nick, Packet),
-			ok
-    end.
+route_or_create_room(Room, {From, To, Packet} = Routed, #state{host=Host} = State) ->
+	route_to_room(Room, Routed, State).
 
 %% route_to_nonexistent_room(Room, {From, To, Packet},
 %% 			  #state{host=Host} = State) ->
