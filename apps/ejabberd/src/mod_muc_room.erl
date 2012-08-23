@@ -217,6 +217,8 @@ locked_error({route, From, ToNick, {xmlelement, _Name, Attrs, _} = Packet},
                           From, Err),
     {next_state, NextState, StateData}.
 
+%TODO check if process_presence can return {stop,_,_}.
+%if so, this function needs to be modified
 process_presence_activity_dependent(From, Nick, Packet, StateData, NewState) ->
 	Activity = get_user_activity(From, StateData),
 	Now = now_to_usec(now()),
