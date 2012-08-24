@@ -34,9 +34,9 @@ eunit: rebar
 rel: rebar deps
 	./rebar compile generate -f
 
-devrel: rebar deps compile s2s-node1 s2s-node2 muc-node1 muc-node2
+devrel: s2s-node1 s2s-node2 muc-node1 muc-node2
 
-s2s-node1 s2s-node2 muc-node1 muc-node2:
+s2s-node1 s2s-node2 muc-node1 muc-node2: rebar deps compile
 	mkdir -p dev
 	(cd rel && ../rebar generate -f target_dir=../dev/$@ overlay_vars=./reltool_vars/$@-vars.config)
 	cp apps/ejabberd/src/*.erl dev/$@/lib/ejabberd-2.1.8/ebin/
