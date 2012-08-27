@@ -31,9 +31,9 @@
 
 
 %% External exports
--export([start_link/9,
+-export([start_link/10,
          start_link/7,
-         start/9,
+         start/10,
          start/7,
          route/4]).
 
@@ -80,7 +80,7 @@
         Supervisor = gen_mod:get_module_proc(ServerHost, ejabberd_mod_muc_sup),
         supervisor:start_child(Supervisor,
                                [Host, ServerHost, Access, Room, HistorySize,
-                                RoomShaper, Creator, Nick, DefRoomOpts])).
+                                RoomShaper, Creator, Nick, DefRoomOpts, RoomKind])).
 -endif.
 
 -define(XFIELD(Type, Label, Var, Val),
@@ -116,7 +116,7 @@
 %%% API
 %%%----------------------------------------------------------------------
 start(Host, ServerHost, Access, Room, HistorySize, RoomShaper,
-      Creator, Nick, DefRoomOpts) ->
+      Creator, Nick, DefRoomOpts, RoomKind) ->
     ?SUPERVISOR_START.
 
 start(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts) ->
@@ -125,10 +125,10 @@ start(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts) ->
                                         HistorySize, RoomShaper, Opts]).
 
 start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper,
-       Creator, Nick, DefRoomOpts) ->
+       Creator, Nick, DefRoomOpts, RoomKind) ->
     gen_fsm:start_link(?MODULE,
                        [Host, ServerHost, Access, Room, HistorySize,
-                        RoomShaper, Creator, Nick, DefRoomOpts],
+                        RoomShaper, Creator, Nick, DefRoomOpts, RoomKind],
                        ?FSMOPTS).
 
 start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts) ->
@@ -153,7 +153,7 @@ start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts) ->
 %% state is determined accordingly (a locked room for MUC or an instant
 %% one for groupchat).
 init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Creator, _Nick,
-      DefRoomOpts]) ->
+      DefRoomOpts, no_room]) ->
     process_flag(trap_exit, true),
     Shaper = shaper:new(RoomShaper),
     State = set_affiliation(Creator, owner,
@@ -166,7 +166,7 @@ init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Creator, _Nick,
                                    just_created = true,
                                    room_shaper = Shaper}),
     State1 = set_opts(DefRoomOpts, State),
-    ?INFO_MSG("Created MUC room ~s@~s by ~s",
+    ?INFO_MSG("Created MUC room owner process ~s@~s by ~s",
               [Room, Host, jlib:jid_to_binary(Creator)]),
     add_to_log(room_existence, created, State1),
     NextState = case proplists:get_value(instant, DefRoomOpts, false) of
@@ -179,6 +179,26 @@ init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Creator, _Nick,
                         initial_state
                 end,
     {ok, NextState, State1};
+
+%% Created as a secondary room process
+init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Creator, _Nick,
+      DefRoomOpts, no_local_process]) ->
+    process_flag(trap_exit, true),
+    Shaper = shaper:new(RoomShaper),
+    State = set_affiliation(Creator, none,
+                            #state{host = Host,
+                                   server_host = ServerHost,
+                                   access = Access,
+                                   room = Room,
+                                   history = lqueue_new(HistorySize),
+                                   jid = jlib:make_jid(Room, Host, <<>>),
+                                   just_created = true,
+                                   room_shaper = Shaper}),
+    State1 = set_opts(DefRoomOpts, State),
+    ?INFO_MSG("Created MUC room secondary process ~s@~s by ~s",
+              [Room, Host, jlib:jid_to_binary(Creator)]),
+    add_to_log(room_existence, created, State1),
+    {ok, normal_state, State1};
 
 %% A room is restored
 init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts]) ->
