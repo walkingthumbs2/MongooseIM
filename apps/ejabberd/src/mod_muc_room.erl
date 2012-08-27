@@ -1145,10 +1145,12 @@ get_affiliation(JID, StateData) ->
                                 ?DICT:find(Jid, StateData#state.affiliations)
                          end,
                   case lists:foldl(Find, none, [LJID, LJID1, LJID2, LJID3]) of
-                      none ->
-                          none;
                       {ok, Affiliation} ->
-                          Affiliation
+                          Affiliation;
+                      %% error - not found in the dictionary
+                      %% or none - the in list was empty
+                      _ ->
+                        none
                   end
           end,
     case Res of
@@ -2707,8 +2709,7 @@ process_iq_owner(From, set, Lang, SubEl, StateData) ->
                           xml:get_tag_attr_s(<<"type">>, XEl)}
                     of
                         {?NS_XDATA, <<"cancel">>} ->
-                            ?INFO_MSG(<<"Destroyed MUC room ~s by the owner ~s",
-                                        " : cancelled">>,
+                            ?INFO_MSG("Destroyed MUC room ~s by the owner ~s : cancelled",
                                       [jlib:jid_to_binary(StateData#state.jid),
                                        jlib:jid_to_binary(From)]),
                             add_to_log(room_existence, destroyed, StateData),
