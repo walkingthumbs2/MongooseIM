@@ -249,7 +249,7 @@ handle_call({create_instant, Room, From, Nick, Opts},
 		  Host, ServerHost, Access,
 		  Room, HistorySize,
 		  RoomShaper, From,
-          Nick, [{instant, true}|NewOpts]),
+          Nick, [{instant, true}|NewOpts], no_room),
   F = fun() ->
     register_room(Host, Room, Pid,
       mnesia:read(muc_room, {Room, Host}))
@@ -445,14 +445,14 @@ handle_db_room_data(_Room, _From, _To, _State, {no_local_process, locked}, false
 handle_db_room_data(Room, From, To, 
           State = #state{ host = Host, server_host = ServerHost,
                           access = Access},
-          _PidCheckResult, _CanCreateRoom) ->
+                          {RoomKind, _RoomState}, _CanCreateRoom) ->
   HistorySize = State#state.history_size,
   RoomShaper  = State#state.room_shaper,
   DefRoomOpts = State#state.default_room_opts,
   {_, _, Nick} = jlib:jid_tolower(To),
   {ok, Pid} = start_new_room(Host, ServerHost, Access, Room,
             	HistorySize, RoomShaper, From,
-          Nick, DefRoomOpts),
+          Nick, DefRoomOpts, RoomKind),
 
   F = fun() ->
   	register_room(Host, Room, Pid, 
@@ -664,18 +664,18 @@ load_permanent_rooms(Host, ServerHost, Access, HistorySize, RoomShaper) ->
 
 start_new_room(Host, ServerHost, Access, Room,
 	       HistorySize, RoomShaper, From,
-	       Nick, DefRoomOpts) ->
+	       Nick, DefRoomOpts, RoomKind) ->
 	F = fun() ->
 			mnesia:read(muc_room, {Room, Host})
 		end,
 	{atomic, Result} = mnesia:transaction(F), 
 	case Result of
 	[] ->
-	    ?DEBUG("MUC: open new room '~s'~n", [Room]),
+	    ?DEBUG("MUC: open new room process '~s'~n", [Room]),
 	    mod_muc_room:start(Host, ServerHost, Access,
 			       Room, HistorySize,
 			       RoomShaper, From,
-			       Nick, DefRoomOpts);
+			       Nick, DefRoomOpts, RoomKind);
 	[#muc_room{opts = Opts}|_] ->
 	    ?DEBUG("MUC: restore room '~s'~n", [Room]),
 	    mod_muc_room:start(Host, ServerHost, Access,
