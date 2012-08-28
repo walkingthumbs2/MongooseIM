@@ -57,6 +57,10 @@
 -record(routed_iq, {iq, from, packet}).
 -record(routed_nick_iq, {allow_query, online, iq, packet, lang, nick, jid, from, stanza}).
 
+%% copied from mod_muc.erl
+-record(muc_online_room, {name_host, pid, state}).
+
+
 -define(MAX_USERS_DEFAULT_LIST,
         [5, 10, 20, 30, 50, 100, 200, 500, 1000, 2000, 5000]).
 
@@ -284,7 +288,13 @@ initial_state({route, From, ToNick,
         <<>> ->
             %% groupchat 1.0 user, straight to normal_state
             process_presence_activity_dependent(From, ToNick, Presence, StateData, normal_state)
-        end.
+        end;
+
+%% No need to propagate the stanza to the other 
+%% room processes, none shoud exist if the room is not in
+%% normal_state
+initial_state({propagate, _, _, _}, StateData)->
+    {next_state, initial_state, StateData}.
 
 is_query_allowed(Query) ->
     X = xml:get_subtag(Query, <<"x">>),
@@ -315,6 +325,12 @@ locked_state_process_owner_iq(_From, Packet, Lang, _Type, _StateData) ->
       jlib:make_error_reply(Packet, ?ERRT_ITEM_NOT_FOUND(Lang,
                                                          <<"Wrong type">>))},
      locked_state}.
+
+%% No need to propagate the stanza to the other 
+%% room processes, none shoud exist if the room is not in
+%% normal_state
+locked_state({propagate, _, _, _}, StateData)->
+    {next_state, locked_state, StateData};
 
 %% Destroy room / confirm instant room / configure room
 locked_state({route, From, _ToNick,
@@ -381,6 +397,18 @@ locked_state({route, From, ToNick,
 
 locked_state(Call, StateData) ->
     locked_error(Call,locked_state, StateData).
+
+normal_state({propagate, From, ToNick,Packet}, #state{room = Room, host = Host} = StateData) ->
+    ResultList= mnesia:dirty_read(muc_online_room, {Room, Host}) ,
+    lists:foreach(fun(#muc_online_room{pid = Pid}) ->
+                      case node(Pid) == node() of
+                          true ->
+                              ok;
+                          false ->
+                              route_within_room(Pid, From, ToNick, Packet)
+                      end
+                end, ResultList),
+    {next_state, normal_state, StateData};
 
 normal_state({route, From, <<>>,
               {xmlelement, <<"message">>, Attrs, _Els} = Packet},
@@ -685,7 +713,15 @@ terminate(Reason, _StateName, StateData) ->
 %%% Internal functions
 %%%----------------------------------------------------------------------
 
+%% send the message to the other room processes,
+%% then process it locally
 route(Pid, From, ToNick, Packet) ->
+    gen_fsm:send_event(Pid, {propagate, From, ToNick, Packet}),
+    gen_fsm:send_event(Pid, {route, From, ToNick, Packet}).
+
+%% consider the message propagated across all the room
+%% processes, just hande it locally
+route_within_room(Pid, From, ToNick, Packet) ->
     gen_fsm:send_event(Pid, {route, From, ToNick, Packet}).
 
 process_groupchat_message(From,

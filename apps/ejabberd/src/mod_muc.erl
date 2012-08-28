@@ -485,7 +485,7 @@ initialize_room({locked, no_pid}, From, To,
   Err = jlib:make_error_reply(Packet, ?ERRT_ITEM_NOT_FOUND(Lang, ErrText)),
   ejabberd_router:route(To, From, Err);
 
-%% if the room is new adjust it here
+%% if the room is new it can be adjusted here
 initialize_room({_IsRoomNew, Pid}, From, To, Packet) ->
   {_, _, Nick} = jlib:jid_tolower(To),
   mod_muc_room:route(Pid, From, Nick, Packet).
