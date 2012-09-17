@@ -1637,7 +1637,6 @@ maybe_add(captcha_required, _Role, From, Nick,
             Err = jlib:make_error_reply(Packet,
                                         ?ERRT_RESOURCE_CONSTRAINT(Lang,
                                                                   ErrText)),
-<<<<<<< HEAD
             ejabberd_router:route( % TODO: s/Nick/<<>>/
                 jlib:jid_replace_resource(StateData#state.jid, Nick),
                 From, Err),
@@ -1649,19 +1648,6 @@ maybe_add(captcha_required, _Role, From, Nick,
             ejabberd_router:route( % TODO: s/Nick/<<>>/
                 jlib:jid_replace_resource(StateData#state.jid, Nick),
                 From, Err),
-=======
-            ejabberd_router:route( % TODO: s/Nick/<<>>/
-                jlib:jid_replace_resource(StateData#state.jid, Nick),
-                From, Err),
-            StateData;
-        _ ->
-            ErrText = <<"Unable to generate a captcha">>,
-            Err = jlib:make_error_reply(Packet,
-                ?ERRT_INTERNAL_SERVER_ERROR(Lang, ErrText)),
-            ejabberd_router:route( % TODO: s/Nick/<<>>/
-                jlib:jid_replace_resource(StateData#state.jid, Nick),
-                From, Err),
->>>>>>> 85e3d36f40b0c512e6ca4f8e49d04dd755976d8c
             StateData
     end;
 
