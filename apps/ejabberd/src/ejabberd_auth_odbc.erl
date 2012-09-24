@@ -252,7 +252,7 @@ remove_user(User, Server) ->
 	LUser ->
 	    Username = ejabberd_odbc:escape(LUser),
 	    LServer = jlib:nameprep(Server),
-	    catch odbc_queries:del_user(LServer, Username),
+	    odbc_queries:del_user(LServer, Username),
             ok
     end.
 
