@@ -1109,8 +1109,8 @@ srv_lookup(Server) ->
                   L when is_list(L) -> L;
                   _ -> []
               end,
-    TimeoutMs = timer:seconds(proplists:get_value(timeout, Options, 10)),
-    Retries = proplists:get_value(retries, Options, 2),
+    TimeoutMs = timer:seconds(ejabberd_utils:get_value(timeout, Options, 10)),
+    Retries = ejabberd_utils:get_value(retries, Options, 2),
     srv_lookup(Server, TimeoutMs, Retries).
 
 %% XXX - this behaviour is suboptimal in the case that the domain

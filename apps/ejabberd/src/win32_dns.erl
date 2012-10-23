@@ -87,8 +87,8 @@ interface_configs(R) ->
 
 sort_configs(Configs) ->
     lists:sort(fun ({_, A}, {_, B}) ->
-                       ANS = proplists:get_value("NameServer", A),
-                       BNS = proplists:get_value("NameServer", B),
+                       ANS = ejabberd_utils:get_value("NameServer", A),
+                       BNS = ejabberd_utils:get_value("NameServer", B),
                        if ANS =/= undefined, BNS =:= undefined -> false;
                           true -> count_undef(A) < count_undef(B)
                        end
@@ -131,7 +131,7 @@ pick_config() ->
 
 get_value([], _Config) -> undefined;
 get_value([K|Keys], Config) ->
-    case proplists:get_value(K, Config) of
+    case ejabberd_utils:get_value(K, Config) of
         undefined -> get_value(Keys, Config);
         V -> V
     end.

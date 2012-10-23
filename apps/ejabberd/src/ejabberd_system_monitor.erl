@@ -96,7 +96,7 @@ process_command(From, To, Packet) ->
 %% Description: Initiates the server
 %%--------------------------------------------------------------------
 init(Opts) ->
-    LH = proplists:get_value(large_heap, Opts),
+    LH = ejabberd_utils:get_value(large_heap, Opts),
     process_flag(priority, high),
     erlang:system_monitor(self(), [{large_heap, LH}]),
     lists:foreach(
@@ -131,7 +131,7 @@ get_large_heap() ->
     get_large_heap(MonSettings).
 get_large_heap(MonSettings) ->
     {_MonitorPid, Options} = MonSettings,
-    proplists:get_value(large_heap, Options).
+    ejabberd_utils:get_value(large_heap, Options).
 
 %%--------------------------------------------------------------------
 %% Function: handle_cast(Msg, State) -> {noreply, State} |

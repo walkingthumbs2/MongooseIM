@@ -145,7 +145,7 @@ get_user_ip(User, Server, Resource) ->
             undefined;
         Ss ->
             Session = lists:max(Ss),
-            proplists:get_value(ip, Session#session.info)
+            ejabberd_utils:get_value(ip, Session#session.info)
     end.
 
 get_user_info(User, Server, Resource) ->
@@ -158,8 +158,8 @@ get_user_info(User, Server, Resource) ->
         Ss ->
             Session = lists:max(Ss),
             Node = node(element(2, Session#session.sid)),
-            Conn = proplists:get_value(conn, Session#session.info),
-            IP = proplists:get_value(ip, Session#session.info),
+            Conn = ejabberd_utils:get_value(conn, Session#session.info),
+            IP = ejabberd_utils:get_value(ip, Session#session.info),
             [{node, Node}, {conn, Conn}, {ip, IP}]
     end.
 

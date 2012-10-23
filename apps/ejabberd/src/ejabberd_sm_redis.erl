@@ -116,7 +116,7 @@ cleanup(Node) ->
 -spec total_count() -> integer().
 total_count() ->
     {Counts, _} = rpc:multicall(supervisor, count_children, [ejabberd_c2s_sup]),
-    lists:sum([proplists:get_value(active, Count, 0) || Count <- Counts, is_list(Count)]).
+    lists:sum([ejabberd_utils:get_value(active, Count, 0) || Count <- Counts, is_list(Count)]).
 
 -spec unique_count() -> integer().
 unique_count() ->

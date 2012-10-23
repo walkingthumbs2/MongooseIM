@@ -169,7 +169,7 @@ init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Creator, _Nick,
     ?INFO_MSG("Created MUC room ~s@~s by ~s",
               [Room, Host, jlib:jid_to_binary(Creator)]),
     add_to_log(room_existence, created, State1),
-    NextState = case proplists:get_value(instant, DefRoomOpts, false) of
+    NextState = case ejabberd_utils:get_value(instant, DefRoomOpts, false) of
                     true ->
                         %% Instant room -- groupchat 1.0 request
                         add_to_log(room_existence, started, State1),

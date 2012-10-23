@@ -234,9 +234,9 @@ include_config_files([{include_config_file, Filename} | Terms], Res) ->
     include_config_files([{include_config_file, Filename, []} | Terms], Res);
 include_config_files([{include_config_file, Filename, Options} | Terms], Res) ->
     Included_terms = get_plain_terms_file(Filename),
-    Disallow = proplists:get_value(disallow, Options, []),
+    Disallow = ejabberd_utils:get_value(disallow, Options, []),
     Included_terms2 = delete_disallowed(Disallow, Included_terms),
-    Allow_only = proplists:get_value(allow_only, Options, all),
+    Allow_only = ejabberd_utils:get_value(allow_only, Options, all),
     Included_terms3 = keep_only_allowed(Allow_only, Included_terms2),
     include_config_files(Terms, Res ++ Included_terms3);
 include_config_files([Term | Terms], Res) ->
@@ -327,7 +327,7 @@ replace([Term|Terms], Macros) ->
 replace_term(Key, Macros) when is_atom(Key) ->
     case is_all_uppercase(Key) of
         true ->
-            case proplists:get_value(Key, Macros) of
+            case ejabberd_utils:get_value(Key, Macros) of
                 undefined -> exit({undefined_macro, Key});
                 Value -> Value
             end;
@@ -335,7 +335,7 @@ replace_term(Key, Macros) when is_atom(Key) ->
             Key
     end;
 replace_term({use_macro, Key, Value}, Macros) ->
-    proplists:get_value(Key, Macros, Value);
+    ejabberd_utils:get_value(Key, Macros, Value);
 replace_term(Term, Macros) when is_list(Term) ->
     replace(Term, Macros);
 replace_term(Term, Macros) when is_tuple(Term) ->

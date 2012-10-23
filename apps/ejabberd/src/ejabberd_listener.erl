@@ -477,7 +477,7 @@ certfile_readable(Opts) ->
     end.
 
 get_proto(Opts) ->
-    case proplists:get_value(proto, Opts) of
+    case ejabberd_utils:get_value(proto, Opts) of
 	undefined ->
 	    tcp;
 	Proto ->

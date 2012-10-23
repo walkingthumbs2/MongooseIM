@@ -454,7 +454,7 @@ next_row(RowInd, routerRegisteredPathsTable) ->
 
 
 column_mapping(Cols, Map) ->
-    lists:map(fun(Col) -> proplists:get_value(Col, Map) end, Cols).
+    lists:map(fun(Col) -> ejabberd_utils:get_value(Col, Map) end, Cols).
 
 get_column_map(routerRegisteredPathsTable) ->
     [{?routeTo, 1},

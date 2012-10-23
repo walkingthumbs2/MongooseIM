@@ -15,8 +15,8 @@
 
 -spec start_link(list()) -> {ok, pid()}.
 start_link(Opts) ->
-    PoolSize = proplists:get_value(pool_size, Opts, 10),
-    RedoOpts = proplists:get_value(worker_config, Opts, []),
+    PoolSize = ejabberd_utils:get_value(pool_size, Opts, 10),
+    RedoOpts = ejabberd_utils:get_value(worker_config, Opts, []),
     ChildMods = [redo, redo_redis_proto, redo_uri],
     ChildMFA = {redo, start_link, [undefined, RedoOpts]},
 
