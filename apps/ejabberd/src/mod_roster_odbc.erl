@@ -182,10 +182,10 @@ process_iq_get(From, To, #iq{sub_el = SubEl} = IQ) ->
 
     try
 	    {ItemsToSend, VersionToSend} =
-            case {xml:get_tag_attr(<<"ver">>, SubEl),
+            case {exml_query:attr(SubEl, <<"ver">>),
                   roster_versioning_enabled(LServer),
                   roster_version_on_db(LServer)} of
-                {{value, RequestedVersion}, true, true} ->
+                {RequestedVersion, true, true} ->
                     %% Retrieve version from DB. Only load entire roster
                     %% when neccesary.
                     case odbc_queries:get_roster_version(ejabberd_odbc:escape(LServer),
@@ -206,7 +206,7 @@ process_iq_get(From, To, #iq{sub_el = SubEl} = IQ) ->
                                        ejabberd_hooks:run_fold(roster_get, To#jid.lserver, [], [US])), RosterVersion}
                     end;
 
-                {{value, RequestedVersion}, true, false} ->
+                {RequestedVersion, true, false} ->
                     RosterItems = ejabberd_hooks:run_fold(roster_get, To#jid.lserver, [] , [US]),
                     case roster_hash(RosterItems) of
                         RequestedVersion ->
@@ -314,8 +314,8 @@ process_iq_set(From, To, #iq{sub_el = SubEl} = IQ) ->
     lists:foreach(fun(El) -> process_item_set(From, To, El) end, Els),
     IQ#iq{type = result, sub_el = []}.
 
-process_item_set(From, To, {xmlelement, _Name, Attrs, Els}) ->
-    JID1 = jlib:binary_to_jid(xml:get_attr_s(<<"jid">>, Attrs)),
+process_item_set(From, To, {xmlelement, _Name, Attrs, Els} = El) ->
+    JID1 = jlib:binary_to_jid(exml_query:attr(El, <<"jid">>)),
     #jid{user = User, luser = LUser, lserver = LServer} = From,
     case JID1 of
         error ->
@@ -405,8 +405,8 @@ process_item_attrs(Item, [_ | Attrs]) ->
 process_item_attrs(Item, []) ->
     Item.
 
-process_item_els(Item, [{xmlelement, <<"group">>, _Attrs, SEls} | Els]) ->
-    Groups = [xml:get_cdata(SEls) | Item#roster.groups],
+process_item_els(Item, [{xmlelement, <<"group">>, _Attrs, _SEls} = El | Els]) ->
+    Groups = [exml_query:cdata(El) | Item#roster.groups],
     process_item_els(Item#roster{groups = Groups}, Els);
 process_item_els(Item, [{xmlelement, _, _, _} | Els]) ->
     process_item_els(Item, Els);
@@ -788,8 +788,8 @@ set_items(User, Server, SubEl) ->
                                   process_item_set_t(LUser, LServer, El)
                           end, Els)).
 
-process_item_set_t(LUser, LServer, {xmlelement, _Name, Attrs, Els}) ->
-    JID1 = jlib:binary_to_jid(xml:get_attr_s(<<"jid">>, Attrs)),
+process_item_set_t(LUser, LServer, {xmlelement, _Name, Attrs, Els} = El) ->
+    JID1 = jlib:binary_to_jid(exml_query:attr(El, <<"jid">>)),
     case JID1 of
         error ->
             [];

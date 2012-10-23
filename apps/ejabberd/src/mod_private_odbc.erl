@@ -89,16 +89,16 @@ process_sm_iq(From, To, #iq{type = Type, sub_el = SubEl} = IQ) ->
 
 set_data(LUser, LServer, El) ->
     case El of
-        {xmlelement, _Name, Attrs, _Els} ->
-            XMLNS = xml:get_attr_s(<<"xmlns">>, Attrs),
+        {xmlelement, _Name, _Attrs, _Els} = El ->
+            XMLNS = exml_query:attr(El, <<"xmlns">>),
             case XMLNS of
-                <<>> ->
+                undefined ->
                     ignore;
                 _ ->
                     Username = ejabberd_odbc:escape(LUser),
                     LXMLNS = ejabberd_odbc:escape(XMLNS),
                     SData = ejabberd_odbc:escape(
-                              xml:element_to_binary(El)),
+                              exml:to_binary(El)),
                     odbc_queries:set_private_data(LServer, Username, LXMLNS, SData)
             end;
         _ ->
@@ -112,8 +112,8 @@ get_data(_LUser, _LServer, [], Res) ->
     lists:reverse(Res);
 get_data(LUser, LServer, [El | Els], Res) ->
     case El of
-        {xmlelement, _Name, Attrs, _} ->
-            XMLNS = xml:get_attr_s(<<"xmlns">>, Attrs),
+        {xmlelement, _Name, _Attrs, _} = El ->
+            XMLNS = exml_query:attr(El, <<"xmlns">>),
             Username = ejabberd_odbc:escape(LUser),
             LXMLNS = ejabberd_odbc:escape(XMLNS),
             case catch odbc_queries:get_private_data(LServer, Username, LXMLNS) of

@@ -354,12 +354,12 @@ do_route(From, To, Packet) ->
     {xmlelement, Name, Attrs, _Els} = Packet,
     case LResource of
         <<>> ->
-            do_route_no_resource(Name, xml:get_attr_s(<<"type">>, Attrs),
+            do_route_no_resource(Name, exml_query:attr(Packet, <<"type">>),
                                  From, To, Packet);
         _ ->
             case ?SM_BACKEND:get_sessions(LUser, LServer, LResource) of
                 [] ->
-                    do_route_offline(Name, xml:get_attr_s(<<"type">>, Attrs),
+                    do_route_offline(Name, exml_query:attr(Packet, <<"type">>, Attrs),
                                      From, To, Packet);
                 Ss ->
                     Session = lists:max(Ss),
@@ -378,7 +378,7 @@ do_route_no_resource_presence_prv(From,To,Packet,Type,Reason) ->
 
 -spec do_route_no_resource_presence(binary(), #jid{}, #jid{}, tuple()) -> any().
 do_route_no_resource_presence(<<"subscribe">>, From, To, Packet) ->
-	Reason = xml:get_path_s(Packet, [{elem, <<"status">>}, cdata]),
+        Reason = exml_query:path(Packet, [{element, <<"status">>}, cdata], <<>>),
 	do_route_no_resource_presence_prv(From, To, Packet, subscribe, Reason);
 do_route_no_resource_presence(<<"subscribed">>, From, To, Packet) ->
 	do_route_no_resource_presence_prv(From, To, Packet, subscribed, <<>>);
@@ -479,7 +479,7 @@ route_message(From, To, Packet) ->
               end,
               PrioRes);
         _ ->
-            case xml:get_tag_attr_s(<<"type">>, Packet) of
+            case exml_query:attr(Packet, <<"type">>) of
                 <<"error">> ->
                     ok;
                 <<"groupchat">> ->

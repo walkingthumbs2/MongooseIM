@@ -52,6 +52,7 @@
 
 -include("ejabberd.hrl").
 -include("jlib.hrl").
+-include_lib("exml/include/exml.hrl").
 
 
 -record(muc_room, {name_host, opts}).
@@ -340,8 +341,7 @@ route_by_privilege({From, To, Packet} = Routed,
 	    {Room, _, _} = jlib:jid_tolower(To),
 	    route_to_room(Room, Routed, State);
 	_ ->
-	    {xmlelement, _Name, Attrs, _Els} = Packet,
-	    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
+            Lang = exml_query:attr(Packet, <<"xml:lang">>, <<>>),
 	    ErrText = <<"Access denied by service policy">>,
 	    Err = jlib:make_error_reply(Packet,
 					?ERRT_FORBIDDEN(Lang, ErrText)),
@@ -368,8 +368,8 @@ route_to_room(Room, {From,To,Packet} = Routed, #state{host=Host} = State) ->
 
 route_to_nonexistent_room(Room, {From, To, Packet},
 			  #state{host=Host} = State) ->
-    {xmlelement, Name, Attrs, _} = Packet,
-    Type = xml:get_attr_s(<<"type">>, Attrs),
+    {xmlelement, Name, _Attrs, _} = Packet,
+    Type = exml_query:attr(Packet, <<"type">>, <<>>),
     case {Name, Type} of
 	{<<"presence">>, <<>>} ->
 	    ServerHost = State#state.server_host,
@@ -389,14 +389,14 @@ route_to_nonexistent_room(Room, {From, To, Packet},
 		    mod_muc_room:route(Pid, From, Nick, Packet),
 		    ok;
 		false ->
-		    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
+                    Lang = exml_query:attr(Packet, <<"xml:lang">>, <<>>),
 		    ErrText = <<"Room creation is denied by service policy">>,
 		    Err = jlib:make_error_reply(
 			    Packet, ?ERRT_NOT_ALLOWED(Lang, ErrText)),
 		    ejabberd_router:route(To, From, Err)
 	    end;
 	_ ->
-	    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
+            Lang = exml_query:attr(Packet, <<"xml:lang">>, <<>>),
 	    ErrText = <<"Conference room does not exist">>,
 	    Err = jlib:make_error_reply(
 		    Packet, ?ERRT_ITEM_NOT_FOUND(Lang, ErrText)),
@@ -409,8 +409,7 @@ route_by_nick(<<>>, {_,_,Packet} = Routed, State) ->
     route_by_type(Name, Routed, State);
 
 route_by_nick(_Nick, {From, To, Packet}, _State) ->
-    {xmlelement, _Name, Attrs, _Els} = Packet,
-    case xml:get_attr_s(<<"type">>, Attrs) of
+    case exml_query:attr(Packet, <<"type">>, <<>>) of
 	<<"error">> ->
 	    ok;
 	<<"result">> ->
@@ -477,17 +476,16 @@ route_by_type(<<"iq">>, {From, To, Packet}, #state{host = Host} = State) ->
 route_by_type(<<"message">>, {From, To, Packet},
 	      #state{host = Host, server_host = ServerHost,
 	             access = {_,_,AccessAdmin,_}}) ->
-    {xmlelement, _Name, Attrs, _Els} = Packet,
-    case xml:get_attr_s(<<"type">>, Attrs) of
+    case exml_query:attr(Packet, <<"type">>, <<>>) of
 	<<"error">> ->
 	    ok;
 	_ ->
 	    case acl:match_rule(ServerHost, AccessAdmin, From) of
 		allow ->
-		    Msg = xml:get_path_s(Packet, [{elem, <<"body">>}, cdata]),
+                    Msg = exml_query:path(Packet, [{element, <<"body">>}, cdata], <<>>),
 		    broadcast_service_message(Host, Msg);
 		_ ->
-		    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
+                    Lang = exml_query:attr(Packet, <<"xml:lang">>, <<>>),
 		    ErrText = <<"Only service administrators are allowed to send service messages">>,
 		    Err = ?ERRT_FORBIDDEN(Lang, ErrText),
 		    ErrorReply = jlib:make_error_reply(Packet, Err),
@@ -755,12 +753,12 @@ iq_set_register_info(Host, From, Nick, Lang) ->
 
 process_iq_register_set(Host, From, SubEl, Lang) ->
     {xmlelement, _Name, _Attrs, Els} = SubEl,
-    case xml:get_subtag(SubEl, <<"remove">>) of
-	false ->
-	    case xml:remove_cdata(Els) of
+    case exml_query:subelement(SubEl, <<"remove">>) of
+	undefined ->
+            case [X || X = #xmlelement{} <- Els] of
 		[{xmlelement, <<"x">>, _Attrs1, _Els1} = XEl] ->
-		    case {xml:get_tag_attr_s(<<"xmlns">>, XEl),
-			  xml:get_tag_attr_s(<<"type">>, XEl)} of
+                    case {exml_query:attr(XEl, <<"xmlns">>, <<>>),
+                          exml_query:attr(XEl, <<"type">>, <<>>)} of
 			{?NS_XDATA, <<"cancel">>} ->
 			    {result, []};
 			{?NS_XDATA, <<"submit">>} ->

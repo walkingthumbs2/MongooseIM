@@ -162,7 +162,7 @@ stop(Host) ->
     exit(whereis(Proc), stop),
     {wait, Proc}.
 
-get_sm_features(Acc, _From, _To, "", _Lang) ->
+get_sm_features(Acc, _From, _To, <<>>, _Lang) ->
     Feats = case Acc of
 		{result, I} -> I;
 		_ -> []
@@ -178,29 +178,29 @@ get_sm_features(Acc, _From, _To, _Node, _Lang) ->
 
 
 store_packet(From, To, Packet) ->
-    Type = xml:get_tag_attr_s("type", Packet),
+    Type = exml_query:attr(Packet, <<"type">>),
     if
-	(Type /= "error") and (Type /= "groupchat") and
-	(Type /= "headline") ->
-	    case check_event_chatstates(From, To, Packet) of
-		true ->
-		    #jid{luser = LUser, lserver = LServer} = To,
-		    TimeStamp = now(),
-		    {xmlelement, _Name, _Attrs, Els} = Packet,
-		    Expire = find_x_expire(TimeStamp, Els),
-		    gen_mod:get_module_proc(To#jid.lserver, ?PROCNAME) !
-			#offline_msg{us = {LUser, LServer},
-				     timestamp = TimeStamp,
-				     expire = Expire,
-				     from = From,
-				     to = To,
-				     packet = Packet},
-		    stop;
-		_ ->
-		    ok
-	    end;
-	true ->
-	    ok
+        (Type /= <<"error">>) and (Type /= <<"groupchat">>) and
+                (Type /= <<"headline">>) ->
+            case check_event_chatstates(From, To, Packet) of
+                true ->
+                    #jid{luser = LUser, lserver = LServer} = To,
+                    TimeStamp = now(),
+                    {xmlelement, _Name, _Attrs, Els} = Packet,
+                    Expire = find_x_expire(TimeStamp, Els),
+                    gen_mod:get_module_proc(To#jid.lserver, ?PROCNAME) !
+                    #offline_msg{us = {LUser, LServer},
+                                 timestamp = TimeStamp,
+                                 expire = Expire,
+                                 from = From,
+                                 to = To,
+                                 packet = Packet},
+                    stop;
+                _ ->
+                    ok
+            end;
+        true ->
+            ok
     end.
 
 %% Check if the packet has any content about XEP-0022 or XEP-0085
@@ -219,25 +219,25 @@ check_event_chatstates(From, To, Packet) ->
 	    false;
 	%% There was an x:event element, and maybe also other stuff
 	{El, _, _} when El /= false ->
-	    case xml:get_subtag(El, "id") of
-		false ->
-		    case xml:get_subtag(El, "offline") of
-			false ->
+            case exml_query:subelement(El, <<"id">>) of
+		undefined ->
+                    case exml_query:subelement(El, <<"offline">>) of
+			undefined ->
 			    true;
 			_ ->
-			    ID = case xml:get_tag_attr_s("id", Packet) of
-				     "" ->
-					 {xmlelement, "id", [], []};
+                            ID = case exml_query:attr(Packet, <<"id">>) of
+				     undefined ->
+                                        {xmlelement, <<"id">>, [], []};
 				     S ->
-					 {xmlelement, "id", [],
+                                        {xmlelement, <<"id">>, [],
 					  [{xmlcdata, S}]}
 				 end,
 			    ejabberd_router:route(
 			      To, From, {xmlelement, Name, Attrs,
-					 [{xmlelement, "x",
-					   [{"xmlns", ?NS_EVENT}],
+                                            [{xmlelement, <<"x">>,
+                                                [{<<"xmlns">>, ?NS_EVENT}],
 					   [ID,
-					    {xmlelement, "offline", [], []}]}]
+                                            {xmlelement, <<"offline">>, [], []}]}]
 					}),
 			    true
 		    end;
@@ -252,7 +252,7 @@ find_x_event_chatstates([], Res) ->
 find_x_event_chatstates([{xmlcdata, _} | Els], Res) ->
     find_x_event_chatstates(Els, Res);
 find_x_event_chatstates([El | Els], {A, B, C}) ->
-    case xml:get_tag_attr_s("xmlns", El) of
+    case exml_query:attr(El, <<"xmlns">>) of
 	?NS_EVENT ->
 	    find_x_event_chatstates(Els, {El, B, C});
 	?NS_CHATSTATES ->
@@ -266,9 +266,9 @@ find_x_expire(_, []) ->
 find_x_expire(TimeStamp, [{xmlcdata, _} | Els]) ->
     find_x_expire(TimeStamp, Els);
 find_x_expire(TimeStamp, [El | Els]) ->
-    case xml:get_tag_attr_s("xmlns", El) of
+    case exml_query:attr(El, <<"xmlns">>) of
 	?NS_EXPIRE ->
-	    Val = xml:get_tag_attr_s("seconds", El),
+            Val = exml_query:attr(El, <<"seconds">>),
 	    case catch list_to_integer(Val) of
 		{'EXIT', _} ->
 		    never;
@@ -508,7 +508,7 @@ discard_warn_sender(Msgs) ->
     lists:foreach(
       fun(#offline_msg{from=From, to=To, packet=Packet}) ->
 	      ErrText = "Your contact offline message queue is full. The message has been discarded.",
-	      Lang = xml:get_tag_attr_s("xml:lang", Packet),
+              Lang = exml_query:attr(Packet, <<"xml:lang">>),
 	      Err = jlib:make_error_reply(
 		      Packet, ?ERRT_RESOURCE_CONSTRAINT(Lang, ErrText)),
 	      ejabberd_router:route(
@@ -635,7 +635,7 @@ get_messages_subset2(Max, Length, MsgsAll) ->
     MsgsLastN = lists:nthtail(Length - FirstN - FirstN, Msgs2),
     NoJID = jlib:make_jid("...", "...", ""),
     IntermediateMsg = #offline_msg{timestamp = now(), from = NoJID, to = NoJID,
-				   packet = {xmlelement, "...", [], []}},
+                                   packet = {xmlelement, <<"...">>, [], []}},
     MsgsFirstN ++ [IntermediateMsg] ++ MsgsLastN.
 
 webadmin_user(Acc, User, Server, Lang) ->

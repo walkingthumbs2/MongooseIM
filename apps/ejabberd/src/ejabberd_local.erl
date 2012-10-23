@@ -315,8 +315,8 @@ do_route(From, To, Packet) ->
 		    ok
 	    end;
 	true ->
-	    {xmlelement, _Name, Attrs, _Els} = Packet,
-	    case xml:get_attr_s(<<"type">>, Attrs) of
+	    {xmlelement, _Name, _Attrs, _Els} = Packet,
+	    case exml_query:attr(Packet, <<"type">>) of
 		<<"error">> -> ok;
 		<<"result">> -> ok;
 		_ ->

@@ -97,23 +97,23 @@ process_iq(From, To,
 
     case Type of
 	set ->
-	    UTag = xml:get_subtag(SubEl, <<"username">>),
-	    PTag = xml:get_subtag(SubEl, <<"password">>),
-	    RTag = xml:get_subtag(SubEl, <<"remove">>),
+            UTag = exml_query:subelement(SubEl, <<"username">>),
+	    PTag = exml_query:subelement(SubEl, <<"password">>),
+	    RTag = exml_query:subelement(SubEl, <<"remove">>),
 	    Server = To#jid.lserver,
         Access = gen_mod:get_module_opt(Server, ?MODULE, access, all),
 	    AllowRemove = (allow == acl:match_rule(Server, Access, From)),
 	    if
-		(UTag /= false) and (RTag /= false) and AllowRemove ->
-		    User = xml:get_tag_cdata(UTag),
+		(UTag /= undefined) and (RTag /= undefined) and AllowRemove ->
+		    User = exml_query:cdata(UTag),
 		    case From of
 			#jid{user = User, lserver = Server} ->
 			    ejabberd_auth:remove_user(User, Server),
 			    IQ#iq{type = result, sub_el = [SubEl]};
 			_ ->
 			    if
-				PTag /= false ->
-				    Password = xml:get_tag_cdata(PTag),
+				PTag /= undefined ->
+				    Password = exml_query:cdata(PTag),
 				    case ejabberd_auth:remove_user(User,
 								   Server,
 								   Password) of
@@ -145,7 +145,7 @@ process_iq(From, To,
 					  sub_el = [SubEl, ?ERR_BAD_REQUEST]}
 			    end
 		    end;
-		(UTag == false) and (RTag /= false) and AllowRemove ->
+		(UTag == undefined) and (RTag /= undefined) and AllowRemove ->
 		    case From of
 			#jid{user = User,
 			     lserver = Server,
@@ -163,9 +163,9 @@ process_iq(From, To,
 			    IQ#iq{type = error,
 				  sub_el = [SubEl, ?ERR_NOT_ALLOWED]}
 		    end;
-		(UTag /= false) and (PTag /= false) ->
-		    User = xml:get_tag_cdata(UTag),
-		    Password = xml:get_tag_cdata(PTag),
+		(UTag /= undefined) and (PTag /= undefined) ->
+		    User = exml_query:cdata(UTag),
+		    Password = exml_query:cdata(PTag),
 		    try_register_or_set_password(
 		      User, Server, Password, From,
 		      IQ, SubEl, Source, Lang);

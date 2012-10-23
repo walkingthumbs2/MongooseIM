@@ -66,6 +66,7 @@
 -include("ejabberd.hrl").
 -include("jlib.hrl").
 -include("mod_privacy.hrl").
+-include_lib("exml/include/exml.hrl").
 
 -define(SETS, gb_sets).
 -define(DICT, dict).
@@ -274,19 +275,19 @@ get_subscribed(FsmRef) ->
 %%          {stop, Reason, NewStateData}
 %%----------------------------------------------------------------------
 
-wait_for_stream({xmlstreamstart, _Name, Attrs}, StateData) ->
+wait_for_stream({xmlstreamstart, _Name, _Attrs} = El, StateData) ->
     DefaultLang = case ?MYLANG of
               undefined ->
               "en";
               DL ->
               DL
     end,
-    case xml:get_attr_s(<<"xmlns:stream">>, Attrs) of
+    case exml_query:attr(El, <<"xmlns:stream">>) of
         ?NS_STREAM ->
-            Server = jlib:nameprep(xml:get_attr_s(<<"to">>, Attrs)),
+            Server = jlib:nameprep(exml_query:attr(El, <<"to">>)),
             case lists:member(Server, ?MYHOSTS) of
                 true ->
-                    Lang = case xml:get_attr_s(<<"xml:lang">>, Attrs) of
+                    Lang = case exml_query:attr(El, <<"xml:lang">>) of
                         Lang1 when size(Lang1) =< 35 ->
                             %% As stated in BCP47, 4.4.1:
                             %% Protocols or specifications that
@@ -300,7 +301,7 @@ wait_for_stream({xmlstreamstart, _Name, Attrs}, StateData) ->
                             ""
                     end,
                     change_shaper(StateData, jlib:make_jid(<<>>, Server, <<>>)),
-                    case xml:get_attr_s(<<"version">>, Attrs) of
+                    case exml_query:attr(El, <<"version">>) of
                         <<"1.0">> ->
                             send_header(StateData, Server, "1.0", DefaultLang),
                             case StateData#state.authenticated of
@@ -609,16 +610,16 @@ wait_for_auth(closed, StateData) ->
     {stop, normal, StateData}.
 
 
-wait_for_feature_request({xmlelement, Name, Attrs, Els} = El, StateData) ->
+wait_for_feature_request({xmlelement, Name, _Attrs, _Els} = El, StateData) ->
     Zlib = StateData#state.zlib,
     TLS = StateData#state.tls,
     TLSEnabled = StateData#state.tls_enabled,
     TLSRequired = StateData#state.tls_required,
     SockMod = (StateData#state.sockmod):get_sockmod(StateData#state.socket),
-    case {xml:get_attr_s(<<"xmlns">>, Attrs), Name} of
+    case {exml_query:attr(El, <<"xmlns">>), Name} of
     {?NS_SASL, <<"auth">>} when not ((SockMod == gen_tcp) and TLSRequired) ->
-        Mech = xml:get_attr_s(<<"mechanism">>, Attrs),
-        ClientIn = jlib:decode_base64(xml:get_cdata(Els)),
+        Mech = exml_query:attr(El, <<"mechanism">>),
+        ClientIn = jlib:decode_base64(exml_query:cdata(El)),
         case cyrsasl:server_start(StateData#state.sasl_state,
                       Mech,
                       ClientIn) of
@@ -680,7 +681,7 @@ wait_for_feature_request({xmlelement, Name, Attrs, Els} = El, StateData) ->
         Socket = StateData#state.socket,
         TLSSocket = (StateData#state.sockmod):starttls(
               Socket, TLSOpts,
-              xml:element_to_binary(
+              exml:to_binary(
                 {xmlelement, <<"proceed">>, [{<<"xmlns">>, ?NS_TLS}], []})),
         fsm_next_state(wait_for_stream,
                StateData#state{socket = TLSSocket,
@@ -690,20 +691,20 @@ wait_for_feature_request({xmlelement, Name, Attrs, Els} = El, StateData) ->
     {?NS_COMPRESS_BIN, <<"compress">>} when Zlib == true,
                     ((SockMod == gen_tcp) or
                      (SockMod == tls)) ->
-        case xml:get_subtag(El, <<"method">>) of
-        false ->
+        case exml_query:subelement(El, <<"method">>) of
+        undefined ->
             send_element(StateData,
                  {xmlelement, <<"failure">>,
                   [{<<"xmlns">>, ?NS_COMPRESS}],
                   [{xmlelement, <<"setup-failed">>, [], []}]}),
             fsm_next_state(wait_for_feature_request, StateData);
         Method ->
-            case xml:get_tag_cdata(Method) of
+            case exml_query:cdata(Method) of
             <<"zlib">> ->
                 Socket = StateData#state.socket,
                 ZlibSocket = (StateData#state.sockmod):compress(
                        Socket,
-                       xml:element_to_binary(
+                       exml:to_binary(
                          {xmlelement, <<"compressed">>,
                           [{<<"xmlns">>, ?NS_COMPRESS}], []})),
                 fsm_next_state(wait_for_stream,
@@ -751,10 +752,10 @@ wait_for_feature_request(closed, StateData) ->
     {stop, normal, StateData}.
 
 
-wait_for_sasl_response({xmlelement, Name, Attrs, Els} = El, StateData) ->
-    case {xml:get_attr_s(<<"xmlns">>, Attrs), Name} of
+wait_for_sasl_response({xmlelement, Name, _Attrs, _Els} = El, StateData) ->
+    case {exml_query:attr(El, <<"xmlns">>), Name} of
     {?NS_SASL, <<"response">>} ->
-        ClientIn = jlib:decode_base64(xml:get_cdata(Els)),
+        ClientIn = jlib:decode_base64(exml_query:cdata(El)),
         case cyrsasl:server_step(StateData#state.sasl_state,
                      ClientIn) of
         {ok, Props} ->
@@ -824,7 +825,7 @@ wait_for_bind({xmlelement, _, _, _} = El, StateData) ->
     case jlib:iq_query_info(El) of
     #iq{type = set, xmlns = ?NS_BIND, sub_el = SubEl} = IQ ->
         U = StateData#state.user,
-        R1 = xml:get_path_s(SubEl, [{elem, <<"resource">>}, cdata]),
+        R1 = exml_query:path(SubEl, [{element, <<"resource">>}, cdata]),
         R = case jlib:resourceprep(R1) of
             error -> error;
             <<>> ->
@@ -994,24 +995,26 @@ session_established(closed, StateData) ->
 %% Process packets sent by user (coming from user on c2s XMPP
 %% connection)
 session_established2(El, StateData) ->
-    {xmlelement, Name, Attrs, _Els} = El,
+    {xmlelement, Name, _Attrs, _Els} = El,
     User = StateData#state.user,
     Server = StateData#state.server,
     FromJID = StateData#state.jid,
-    To = xml:get_attr_s(<<"to">>, Attrs),
+    To = exml_query:attr(El, <<"to">>),
     ToJID = case To of
-        <<>> ->
+        undefined ->
             jlib:make_jid(User, Server, <<>>);
         _ ->
             jlib:binary_to_jid(To)
         end,
     NewEl1 = jlib:remove_attr(<<"xmlns">>, El),
-    NewEl = case xml:get_attr_s(<<"xml:lang">>, Attrs) of
-        <<>> ->
+    NewEl = case exml_query:attr(El, <<"xml:lang">>) of
+        undefined ->
             case StateData#state.lang of
             <<>> -> NewEl1;
             Lang ->
-                xml:replace_tag_attr(<<"xml:lang">>, list_to_binary(Lang), NewEl1)
+                NewEl1#xmlelement{attrs =
+                                  lists:keyreplace(<<"xml:lang">>, 1, NewEl1#xmlelement.attrs,
+                                                   {<<"xml:lang">>, list_to_binary(Lang)})}
             end;
         _ ->
             NewEl1
@@ -1019,7 +1022,7 @@ session_established2(El, StateData) ->
     NewState =
     case ToJID of
         error ->
-        case xml:get_attr_s(<<"type">>, Attrs) of
+        case exml_query:attr(El, <<"type">>) of
             <<"error">> -> StateData;
             <<"result">> -> StateData;
             _ ->
@@ -1161,7 +1164,7 @@ handle_info({route, From, To, Packet}, StateName, StateData) ->
               c2s_presence_in, StateData#state.server,
               StateData,
               [{From, To, Packet}]),
-        case xml:get_attr_s(<<"type">>, Attrs) of
+        case exml_query:attr(Packet, <<"type">>) of
             <<"probe">> ->
             LFrom = jlib:jid_tolower(From),
             LBFrom = jlib:jid_remove_resource(LFrom),
@@ -1515,7 +1518,7 @@ send_element(StateData, El) when StateData#state.xml_socket ->
 send_element(StateData, El) ->
     ejabberd_hooks:run(xmpp_send_element,
                        StateData#state.server, [El]),
-    send_text(StateData, xml:element_to_binary(El)).
+    send_text(StateData, exml:to_binary(El)).
 
 send_header(StateData, Server, Version, Lang)
   when StateData#state.xml_socket ->
@@ -1581,8 +1584,8 @@ is_auth_packet(El) ->
     end.
 
 
-get_auth_tags([{xmlelement, Name, _Attrs, Els}| L], U, P, D, R) ->
-    CData = xml:get_cdata(Els),
+get_auth_tags([{xmlelement, Name, _Attrs, _Els} = El| L], U, P, D, R) ->
+    CData = exml_query:cdata(El),
     case Name of
     <<"username">> ->
         get_auth_tags(L, CData, P, D, R);
@@ -1640,12 +1643,11 @@ process_presence_probe(From, To, StateData) ->
         if
         Cond1 ->
             Timestamp = StateData#state.pres_timestamp,
-            Packet = xml:append_subtags(
-                   StateData#state.pres_last,
-                   %% To is the one sending the presence (the target of the probe)
-                   [jlib:timestamp_to_xml(Timestamp, utc, To, <<>>),
-                %% TODO: Delete the next line once XEP-0091 is Obsolete
-                jlib:timestamp_to_xml(Timestamp)]),
+            PresLast = StateData#state.pres_last,
+            Packet = PresLast#xmlelement{children = 
+                                         PresLast#xmlelement.children ++
+                                         [jlib:timestamp_to_xml(Timestamp, utc, To, <<>>),
+                                          jlib:timestamp_to_xml(Timestamp)]},
             case privacy_check_packet(StateData, To, From, Packet, out) of
             deny ->
                 ok;
@@ -1672,14 +1674,14 @@ process_presence_probe(From, To, StateData) ->
 
 %% User updates his presence (non-directed presence packet)
 presence_update(From, Packet, StateData) ->
-    {xmlelement, _Name, Attrs, _Els} = Packet,
-    case xml:get_attr_s(<<"type">>, Attrs) of
+    {xmlelement, _Name, _Attrs, _Els} = Packet,
+    case exml_query:attr(Packet, <<"type">>) of
     <<"unavailable">> ->
-        Status = case xml:get_subtag(Packet, <<"status">>) of
-             false ->
+        Status = case exml_query:subelement(Packet, <<"status">>) of
+             undefined ->
                 <<>>;
              StatusTag ->
-                xml:get_tag_cdata(StatusTag)
+                exml_query:cdata(StatusTag)
              end,
         Info = [{ip, StateData#state.ip}, {conn, StateData#state.conn},
             {auth_module, StateData#state.auth_module}],
@@ -1775,11 +1777,11 @@ presence_update(From, Packet, StateData) ->
 
 %% User sends a directed presence packet
 presence_track(From, To, Packet, StateData) ->
-    {xmlelement, _Name, Attrs, _Els} = Packet,
+    {xmlelement, _Name, _Attrs, _Els} = Packet,
     LTo = jlib:jid_tolower(To),
     User = StateData#state.user,
     Server = StateData#state.server,
-    case xml:get_attr_s(<<"type">>, Attrs) of
+    case exml_query:attr(Packet, <<"type">>) of
     <<"unavailable">> ->
         check_privacy_route(From, StateData, From, To, Packet),
         I = remove_element(LTo, StateData#state.pres_i),
@@ -2010,11 +2012,11 @@ update_priority(Priority, Packet, StateData) ->
                  Info).
 
 get_priority_from_presence(PresencePacket) ->
-    case xml:get_subtag(PresencePacket, <<"priority">>) of
-    false ->
+    case exml_query:subelement(PresencePacket, <<"priority">>) of
+    undefined ->
         0;
     SubEl ->
-        case catch list_to_integer(xml:get_tag_cdata(SubEl)) of
+        case catch list_to_integer(exml_query:cdata(SubEl)) of
         P when is_integer(P) ->
             P;
         _ ->
@@ -2101,25 +2103,25 @@ resend_subscription_requests(#state{pending_invitations = Pending} = StateData) 
 get_showtag(undefined) ->
     <<"unavailable">>;
 get_showtag(Presence) ->
-    case xml:get_path_s(Presence, [{elem, <<"show">>}, cdata]) of
-    <<>>      -> <<"available">>;
+    case exml_query:path(Presence, [{element, <<"show">>}, cdata]) of
+    undefined      -> <<"available">>;
     ShowTag -> ShowTag
     end.
 
 get_statustag(undefined) ->
     <<>>;
 get_statustag(Presence) ->
-    case xml:get_path_s(Presence, [{elem, <<"status">>}, cdata]) of
-    ShowTag -> ShowTag
-    end.
+    exml_query:path(Presence, [{element, <<"status">>}, cdata]). 
 
 process_unauthenticated_stanza(StateData, El) ->
-    NewEl = case xml:get_tag_attr_s(<<"xml:lang">>, El) of
+    NewEl = case exml_query:attr(El, <<"xml:lang">>) of
         <<>> ->
             case StateData#state.lang of
             <<>> -> El;
             Lang ->
-                xml:replace_tag_attr(<<"xml:lang">>, list_to_binary(Lang), El)
+                El#xmlelement{attrs =
+                              lists:keyreplace(<<"xml:lang">>, 1, El#xmlelement.attrs,
+                                               {<<"xml:lang">>, list_to_binary(Lang)})}
             end;
         _ ->
             El
@@ -2194,10 +2196,10 @@ is_ip_blacklisted({IP,_Port}) ->
 %% Check from attributes
 %% returns invalid-from|NewElement
 check_from(El, FromJID) ->
-    case xml:get_tag_attr(<<"from">>, El) of
-    false ->
+    case exml_query:attr(El, <<"from">>) of
+    undefined ->
         El;
-    {value, SJID} ->
+    SJID ->
         JID = jlib:binary_to_jid(SJID),
         case JID of
         error ->

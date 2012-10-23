@@ -62,56 +62,49 @@
          rsm_decode/1]).
 
 -include("jlib.hrl").
+-include_lib("exml/include/exml.hrl").
 
-make_result_iq_reply({xmlelement, Name, Attrs, SubTags}) ->
-    NewAttrs = make_result_iq_reply_attrs(Attrs),
-    {xmlelement, Name, NewAttrs, SubTags}.
-
-make_result_iq_reply_attrs(Attrs) ->
-    To = xml:get_attr(<<"to">>, Attrs),
-    From = xml:get_attr(<<"from">>, Attrs),
+make_result_iq_reply({xmlelement, Name, Attrs, SubTags} = El) ->
+    To = exml_query:attr(El, <<"to">>),
+    From = exml_query:attr(El, <<"from">>),
     Attrs1 = lists:keydelete(<<"to">>, 1, Attrs),
     Attrs2 = lists:keydelete(<<"from">>, 1, Attrs1),
     Attrs3 = case To of
-                 {value, ToVal} ->
-                     [{<<"from">>, binary_to_list(ToVal)} | Attrs2];
-                 _ ->
-                     Attrs2
+                undefined ->
+                    Attrs2;
+                ToVal ->
+                    [{<<"from">>, binary_to_list(ToVal)} | Attrs2]
              end,
     Attrs4 = case From of
-                 {value, FromVal} ->
-                     [{<<"to">>, binary_to_list(FromVal)} | Attrs3];
-                 _ ->
-                     Attrs3
+                undefined ->
+                    Attrs3;    
+                 FromVal ->
+                     [{<<"to">>, binary_to_list(FromVal)} | Attrs3]
              end,
     Attrs5 = lists:keydelete(<<"type">>, 1, Attrs4),
     Attrs6 = [{<<"type">>, <<"result">>} | Attrs5],
-    Attrs6.
+    {xmlelement, Name, Attrs6, SubTags}.
 
-make_error_reply({xmlelement, Name, Attrs, SubTags}, Error) ->
-    NewAttrs = make_error_reply_attrs(Attrs),
-    {xmlelement, Name, NewAttrs, SubTags ++ [Error]}.
-
-make_error_reply_attrs(Attrs) ->
-    To = xml:get_attr(<<"to">>, Attrs),
-    From = xml:get_attr(<<"from">>, Attrs),
+make_error_reply({xmlelement, Name, Attrs, SubTags} = El, Error) ->
+    To = exml_query:attr(El, <<"to">>),
+    From = exml_query:attr(El, <<"from">>),
     Attrs1 = lists:keydelete(<<"to">>, 1, Attrs),
     Attrs2 = lists:keydelete(<<"from">>, 1, Attrs1),
     Attrs3 = case To of
-                 {value, ToVal} ->
-                     [{<<"from">>, ToVal} | Attrs2];
-                 _ ->
-                     Attrs2
+                undefined ->
+                    Attrs2;
+                ToVal ->
+                    [{<<"from">>, ToVal} | Attrs2]
              end,
     Attrs4 = case From of
-                 {value, FromVal} ->
-                     [{<<"to">>, FromVal} | Attrs3];
-                 _ ->
-                     Attrs3
+                undefined ->
+                    Attrs3;
+                FromVal ->
+                    [{<<"to">>, FromVal} | Attrs3]
              end,
     Attrs5 = lists:keydelete(<<"type">>, 1, Attrs4),
     Attrs6 = [{<<"type">>, <<"error">>} | Attrs5],
-    Attrs6.
+    {xmlelement, Name, Attrs6, SubTags ++ [Error]}.
 
 make_config_change_message(Status) ->
     {xmlelement, <<"message">>,
@@ -359,12 +352,12 @@ iq_query_info(El) ->
 iq_query_or_response_info(El) ->
     iq_info_internal(El, any).
 
-iq_info_internal({xmlelement, Name, Attrs, Els}, Filter) when Name == <<"iq">> ->
+iq_info_internal({xmlelement, Name, _Attrs, Els} = El, Filter) when Name == <<"iq">> ->
     %% Filter is either request or any.  If it is request, any replies
     %% are converted to the atom reply.
-    ID = xml:get_attr_s(<<"id">>, Attrs),
-    Type = xml:get_attr_s(<<"type">>, Attrs),
-    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
+    ID = exml_query:attr(El, <<"id">>, <<>>),
+    Type = exml_query:attr(El, <<"type">>, <<>>),
+    Lang = exml_query:attr(El, <<"xml:lang">>, <<>>),
     {Type1, Class} = case Type of
                          <<"set">> -> {set, request};
                          <<"get">> -> {get, request};
@@ -379,11 +372,11 @@ iq_info_internal({xmlelement, Name, Attrs, Els}, Filter) when Name == <<"iq">> -
             %% The iq record is a bit strange.  The sub_el field is an
             %% XML tuple for requests, but a list of XML tuples for
             %% responses.
-            FilteredEls = xml:remove_cdata(Els),
+            FilteredEls = [X || X = #xmlelement{} <- Els],
             {XMLNS, SubEl} =
                 case {Class, FilteredEls} of
-                    {request, [{xmlelement, _Name2, Attrs2, _Els2}]} ->
-                        {xml:get_attr_s(<<"xmlns">>, Attrs2),
+                    {request, [{xmlelement, _Name2, _Attrs2, _Els2} = El2]} ->
+                        {exml_query:attr(El2, <<"xmlns">>, <<>>),
                          hd(FilteredEls)};
                     {reply, _} ->
                         %% Find the namespace of the first non-error
@@ -394,7 +387,7 @@ iq_info_internal({xmlelement, Name, Attrs, Els}, Filter) when Name == <<"iq">> -
                                           SubName /= <<"error">>],
                         {case NonErrorEls of
                              [NonErrorEl] ->
-                                 xml:get_tag_attr_s(<<"xmlns">>, NonErrorEl);
+                                exml_query:attr(NonErrorEl, <<"xmlns">>, <<>>);
                              _ ->
                                  <<>>
                          end,
@@ -436,8 +429,8 @@ iq_to_xml(#iq{id = ID, type = Type, sub_el = SubEl}) ->
 
 
 parse_xdata_submit(El) ->
-    {xmlelement, _Name, Attrs, Els} = El,
-    case xml:get_attr_s(<<"type">>, Attrs) of
+    {xmlelement, _Name, _Attrs, Els} = El,
+    case exml_query:attr(El, <<"type">>, <<>>) of
         <<"submit">> ->
             lists:reverse(parse_xdata_fields(Els, []));
         <<"form">> -> %% This is a workaround to accept Psi's wrong forms
@@ -448,10 +441,10 @@ parse_xdata_submit(El) ->
 
 parse_xdata_fields([], Res) ->
     Res;
-parse_xdata_fields([{xmlelement, Name, Attrs, SubEls} | Els], Res) ->
+parse_xdata_fields([{xmlelement, Name, _Attrs, SubEls} = El | Els], Res) ->
     case Name of
         <<"field">> ->
-            case xml:get_attr_s(<<"var">>, Attrs) of
+            case exml_query:attr(El, <<"var">>, <<>>) of
                 <<>> ->
                     parse_xdata_fields(Els, Res);
                 Var ->
@@ -467,10 +460,10 @@ parse_xdata_fields([_ | Els], Res) ->
 
 parse_xdata_values([], Res) ->
     Res;
-parse_xdata_values([{xmlelement, Name, _Attrs, SubEls} | Els], Res) ->
+parse_xdata_values([{xmlelement, Name, _Attrs, _SubEls} = El | Els], Res) ->
     case Name of
         <<"value">> ->
-            Val = xml:get_cdata(SubEls),
+            Val = exml_query:cdata(El),
             parse_xdata_values(Els, [Val | Res]);
         _ ->
             parse_xdata_values(Els, Res)
@@ -481,28 +474,28 @@ parse_xdata_values([_ | Els], Res) ->
 rsm_decode(#iq{sub_el=SubEl})->
     rsm_decode(SubEl);
 rsm_decode({xmlelement, _,_,_}=SubEl)->
-    case xml:get_subtag(SubEl,<<"set">>) of
-        false ->
+    case exml_query:subelement(SubEl,<<"set">>) of
+        undefined ->
             none;
         {xmlelement, <<"set">>, _Attrs, SubEls}->
             lists:foldl(fun rsm_parse_element/2, #rsm_in{}, SubEls)
     end.
 
 rsm_parse_element({xmlelement, <<"max">>,[], _}=Elem, RsmIn)->
-    CountStr = xml:get_tag_cdata(Elem),
+    CountStr = exml_query:cdata(Elem),
     {Count, _} = string:to_integer(CountStr),
     RsmIn#rsm_in{max=Count};
 
 rsm_parse_element({xmlelement, <<"before">>, [], _}=Elem, RsmIn)->
-    UID = xml:get_tag_cdata(Elem),
+    UID = exml_query:cdata(Elem),
     RsmIn#rsm_in{direction=before, id=UID};
 
 rsm_parse_element({xmlelement, <<"after">>, [], _}=Elem, RsmIn)->
-    UID = xml:get_tag_cdata(Elem),
+    UID = exml_query:cdata(Elem),
     RsmIn#rsm_in{direction=aft, id=UID};
 
 rsm_parse_element({xmlelement, <<"index">>,[], _}=Elem, RsmIn)->
-    IndexStr = xml:get_tag_cdata(Elem),
+    IndexStr = exml_query:cdata(Elem),
     {Index, _} = string:to_integer(IndexStr),
     RsmIn#rsm_in{index=Index};
 

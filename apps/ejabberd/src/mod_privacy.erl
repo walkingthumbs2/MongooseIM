@@ -41,6 +41,7 @@
 -include("ejabberd.hrl").
 -include("jlib.hrl").
 -include("mod_privacy.hrl").
+-include_lib("exml/include/exml.hrl").
 
 
 start(Host, Opts) ->
@@ -87,13 +88,13 @@ process_iq_get(_, From, _To, #iq{sub_el = SubEl},
 	       #userlist{name = Active}) ->
     #jid{luser = LUser, lserver = LServer} = From,
     {xmlelement, _, _, Els} = SubEl,
-    case xml:remove_cdata(Els) of
+    case [X || X = #xmlelement{} <- Els] of
 	[] ->
 	    process_lists_get(LUser, LServer, Active);
-	[{xmlelement, Name, Attrs, _SubEls}] ->
+	[{xmlelement, Name, _Attrs, _SubEls} = El] ->
 	    case Name of
 		<<"list">> ->
-		    ListName = xml:get_attr(<<"name">>, Attrs),
+		    ListName = exml_query:attr(El, <<"name">>),
 		    process_list_get(LUser, LServer, ListName);
 		_ ->
 		    {error, ?ERR_BAD_REQUEST}
@@ -142,7 +143,10 @@ process_lists_get(LUser, LServer, Active) ->
 	    end
     end.
 
-process_list_get(LUser, LServer, {value, Name}) ->
+process_list_get(_LUser, _LServer, undefined) ->
+    {error, ?ERR_BAD_REQUEST};
+
+process_list_get(LUser, LServer, Name) ->
     case catch mnesia:dirty_read(privacy, {LUser, LServer}) of
 	{'EXIT', _Reason} ->
 	    {error, ?ERR_INTERNAL_SERVER_ERROR};
@@ -160,10 +164,7 @@ process_list_get(LUser, LServer, {value, Name}) ->
 		_ ->
 		    {error, ?ERR_ITEM_NOT_FOUND}
 	    end
-    end;
-
-process_list_get(_LUser, _LServer, false) ->
-    {error, ?ERR_BAD_REQUEST}.
+    end.
 
 item_to_xml(Item) ->
     Attrs1 = [{<<"action">>, action_to_binary(Item#listitem.action)},
@@ -254,13 +255,13 @@ binary_to_action(S) ->
 process_iq_set(_, From, _To, #iq{sub_el = SubEl}) ->
     #jid{luser = LUser, lserver = LServer} = From,
     {xmlelement, _, _, Els} = SubEl,
-    case xml:remove_cdata(Els) of
-	[{xmlelement, Name, Attrs, SubEls}] ->
-	    ListName = xml:get_attr(<<"name">>, Attrs),
+    case [X || X = #xmlelement{} <- Els] of
+	[{xmlelement, Name, _Attrs, SubEls} = El] ->
+	    ListName = exml_query:attr(El, <<"name">>),
 	    case Name of
 		<<"list">> ->
 		    process_list_set(LUser, LServer, ListName,
-				     xml:remove_cdata(SubEls));
+                       [X || X = #xmlelement{} <- SubEls]);
 		<<"active">> ->
 		    process_active_set(LUser, LServer, ListName);
 		<<"default">> ->
@@ -272,8 +273,26 @@ process_iq_set(_, From, _To, #iq{sub_el = SubEl}) ->
 	    {error, ?ERR_BAD_REQUEST}
     end.
 
+process_default_set(LUser, LServer, undefined) ->
+    F = fun() ->
+		case mnesia:read({privacy, {LUser, LServer}}) of
+		    [] ->
+			{result, []};
+		    [R] ->
+			mnesia:write(R#privacy{default = none}),
+			{result, []}
+		end
+	end,
+    case mnesia:transaction(F) of
+	{atomic, {error, _} = Error} ->
+	    Error;
+	{atomic, {result, _} = Res} ->
+	    Res;
+	_ ->
+	    {error, ?ERR_INTERNAL_SERVER_ERROR}
+    end;
 
-process_default_set(LUser, LServer, {value, Name}) ->
+process_default_set(LUser, LServer, Name) ->
     F = fun() ->
 		case mnesia:read({privacy, {LUser, LServer}}) of
 		    [] ->
@@ -296,29 +315,12 @@ process_default_set(LUser, LServer, {value, Name}) ->
 	    Res;
 	_ ->
 	    {error, ?ERR_INTERNAL_SERVER_ERROR}
-    end;
-
-process_default_set(LUser, LServer, false) ->
-    F = fun() ->
-		case mnesia:read({privacy, {LUser, LServer}}) of
-		    [] ->
-			{result, []};
-		    [R] ->
-			mnesia:write(R#privacy{default = none}),
-			{result, []}
-		end
-	end,
-    case mnesia:transaction(F) of
-	{atomic, {error, _} = Error} ->
-	    Error;
-	{atomic, {result, _} = Res} ->
-	    Res;
-	_ ->
-	    {error, ?ERR_INTERNAL_SERVER_ERROR}
     end.
 
+process_active_set(_LUser, _LServer, undefined) ->
+    {result, [], #userlist{}};
 
-process_active_set(LUser, LServer, {value, Name}) ->
+process_active_set(LUser, LServer, Name) ->
     case catch mnesia:dirty_read(privacy, {LUser, LServer}) of
 	[] ->
 	    {error, ?ERR_ITEM_NOT_FOUND};
@@ -330,13 +332,12 @@ process_active_set(LUser, LServer, {value, Name}) ->
 		false ->
 		    {error, ?ERR_ITEM_NOT_FOUND}
 	    end
-    end;
+    end.
 
-process_active_set(_LUser, _LServer, false) ->
-    {result, [], #userlist{}}.
+process_list_set(_LUser, _LServer, undefined, _Els) ->
+    {error, ?ERR_BAD_REQUEST};
 
-
-process_list_set(LUser, LServer, {value, Name}, Els) ->
+process_list_set(LUser, LServer, Name, Els) ->
     case parse_items(Els) of
 	false ->
 	    {error, ?ERR_BAD_REQUEST};
@@ -407,11 +408,7 @@ process_list_set(LUser, LServer, {value, Name}, Els) ->
 		_ ->
 		    {error, ?ERR_INTERNAL_SERVER_ERROR}
 	    end
-    end;
-
-process_list_set(_LUser, _LServer, false, _Els) ->
-    {error, ?ERR_BAD_REQUEST}.
-
+    end.
 
 parse_items([]) ->
     remove;
@@ -421,16 +418,16 @@ parse_items(Els) ->
 parse_items([], Res) ->
     %% Sort the items by their 'order' attribute
     lists:keysort(#listitem.order, Res);
-parse_items([{xmlelement, <<"item">>, Attrs, SubEls} | Els], Res) ->
-    Type   = xml:get_attr(<<"type">>,   Attrs),
-    Value  = xml:get_attr(<<"value">>,  Attrs),
-    SAction = xml:get_attr(<<"action">>, Attrs),
-    SOrder = xml:get_attr(<<"order">>,  Attrs),
-    Action = case catch binary_to_action(element(2, SAction)) of
+parse_items([{xmlelement, <<"item">>, _Attrs, SubEls} = El | Els], Res) ->
+    Type   = exml_query:attr(El, <<"type">>),
+    Value  = exml_query:attr(El, <<"value">>),
+    SAction = exml_query:attr(El, <<"action">>),
+    SOrder = exml_query:attr(El, <<"order">>),
+    Action = case catch binary_to_action(SAction) of
 		 {'EXIT', _} -> false;
 		 Val -> Val
 	     end,
-    Order = case catch binary_to_order(element(2, SOrder)) of
+    Order = case catch binary_to_order(SOrder) of
 		{'EXIT', _} ->
 		    false;
 		IntVal ->
@@ -445,7 +442,11 @@ parse_items([{xmlelement, <<"item">>, Attrs, SubEls} | Els], Res) ->
 	(Action /= false) and (Order /= false) ->
 	    I1 = #listitem{action = Action, order = Order},
 	    I2 = case {Type, Value} of
-		     {{value, T}, {value, V}} ->
+		     {undefined, undefined} ->
+			 I1;
+		     {_, undefined} ->
+			 false;
+		     {T, V} ->
 			 case T of
 			     <<"jid">> ->
 				 case jlib:binary_to_jid(V) of
@@ -476,17 +477,13 @@ parse_items([{xmlelement, <<"item">>, Attrs, SubEls} | Els], Res) ->
 				     _ ->
 					 false
 				 end
-			 end;
-		     {{value, _}, false} ->
-			 false;
-		     _ ->
-			 I1
+			 end
 		 end,
 	    case I2 of
 		false ->
 		    false;
 		_ ->
-		    case parse_matches(I2, xml:remove_cdata(SubEls)) of
+                    case parse_matches(I2, [X || X = #xmlelement{} <- SubEls]) of
 			false ->
 			    false;
 			I3 ->
@@ -564,7 +561,7 @@ get_user_list(_, User, Server) ->
 %% If Dir = in, User@Server is the destination account (To).
 check_packet(_, User, Server,
 	     #userlist{list = List, needdb = NeedDb},
-	     {From, To, {xmlelement, PName, Attrs, _}},
+	     {From, To, {xmlelement, PName, _Attrs, _} = El},
 	     Dir) ->
     case List of
 	[] ->
@@ -574,9 +571,9 @@ check_packet(_, User, Server,
 			<<"message">> -> message;
 			<<"iq">> -> iq;
 			<<"presence">> ->
-			    case xml:get_attr_s(<<"type">>, Attrs) of
+			    case exml_query:attr(El, <<"type">>) of
 				%% notification
-				<<>> -> presence;
+				undefined -> presence;
 				<<"unavailable">> -> presence;
 				%% subscribe, subscribed, unsubscribe,
 				%% unsubscribed, error, probe, or other

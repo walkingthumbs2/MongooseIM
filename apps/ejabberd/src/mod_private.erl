@@ -96,10 +96,10 @@ process_sm_iq(From, To, #iq{type = Type, sub_el = SubEl} = IQ) ->
 
 set_data(LUser, LServer, El) ->
     case El of
-	{xmlelement, _Name, Attrs, _Els} ->
-            XMLNS = xml:get_attr_s(<<"xmlns">>, Attrs),
+	{xmlelement, _Name, _Attrs, _Els} = El ->
+            XMLNS = exml_query:attr(El, <<"xmlns">>),
 	    case XMLNS of
-                <<>> ->
+                undefined ->
 		    ignore;
 		_ ->
 		    mnesia:write(
@@ -117,8 +117,8 @@ get_data(_LUser, _LServer, [], Res) ->
     lists:reverse(Res);
 get_data(LUser, LServer, [El | Els], Res) ->
     case El of
-	{xmlelement, _Name, Attrs, _} ->
-            XMLNS = xml:get_attr_s(<<"xmlns">>, Attrs),
+	{xmlelement, _Name, _Attrs, _} = El ->
+            XMLNS = exml_query:attr(El, <<"xmlns">>),
 	    case mnesia:dirty_read(private_storage, {LUser, LServer, XMLNS}) of
 		[R] ->
 		    get_data(LUser, LServer, Els,

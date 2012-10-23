@@ -10,6 +10,7 @@
 
 -include("ejabberd.hrl").
 -include("jlib.hrl").
+-include_lib("exml/include/exml.hrl").
 
 -export([get_hooks/1]).
 
@@ -196,8 +197,7 @@ privacy_iq_get(Acc, _, _, _, _) ->
 
 -spec privacy_iq_set(term(), term(), term(), term()) -> term().        
 privacy_iq_set(Acc, _From, _To, #iq{sub_el = SubEl}) ->
-    {xmlelement, _, _, Els} = SubEl,
-    case xml:remove_cdata(Els) of
+    case [X || X = #xmlelement{} <- SubEl#xmlelement.children] of
         [{xmlelement, <<"active">>, _, _}] ->
             ?CORE:increment_counter(modPrivacySetsActive),
             ?CORE:increment_window_counter(modPrivacySetsActiveW);

@@ -67,8 +67,8 @@ process_command(From, To, Packet) ->
 		    LFrom = jlib:jid_tolower(jlib:jid_remove_resource(From)),
 		    case lists:member(LFrom, get_admin_jids()) of
 			true ->
-			    Body = xml:get_path_s(
-				     Packet, [{elem, "body"}, cdata]),
+			    Body = exml_query:path(
+				     Packet, [{element, "body"}, cdata]),
 			    spawn(fun() ->
 					  process_flag(priority, high),
 					  process_command1(From, To, Body)

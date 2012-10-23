@@ -100,16 +100,16 @@
 -define(STREAM_TRAILER, <<"</stream:stream>">>).
 
 -define(INVALID_NAMESPACE_ERR,
-	xml:element_to_binary(?SERR_INVALID_NAMESPACE)).
+	exml:to_binary(?SERR_INVALID_NAMESPACE)).
 
 -define(HOST_UNKNOWN_ERR,
-	xml:element_to_binary(?SERR_HOST_UNKNOWN)).
+	exml:to_binary(?SERR_HOST_UNKNOWN)).
 
 -define(INVALID_FROM_ERR,
-        xml:element_to_binary(?SERR_INVALID_FROM)).
+        exml:to_binary(?SERR_INVALID_FROM)).
 
 -define(INVALID_XML_ERR,
-	xml:element_to_binary(?SERR_XML_NOT_WELL_FORMED)).
+	exml:to_binary(?SERR_XML_NOT_WELL_FORMED)).
 
 %%%----------------------------------------------------------------------
 %%% API
@@ -176,11 +176,11 @@ init([{SockMod, Socket}, Opts]) ->
 %%          {stop, Reason, NewStateData}
 %%----------------------------------------------------------------------
 
-wait_for_stream({xmlstreamstart, _Name, Attrs}, StateData) ->
-    case {xml:get_attr_s(<<"xmlns">>, Attrs),
-	  xml:get_attr_s(<<"xmlns:db">>, Attrs),
-	  xml:get_attr_s(<<"to">>, Attrs),
-	  xml:get_attr_s(<<"version">>, Attrs) == <<"1.0">>} of
+wait_for_stream({xmlstreamstart, _Name, _Attrs} = El, StateData) ->
+    case {exml_query:attr(El, <<"xmlns">>),
+	  exml_query:attr(El, <<"xmlns:db">>),
+	  exml_query:attr(El, <<"to">>),
+	  exml_query:attr(El, <<"version">>) == <<"1.0">>} of
 	{<<"jabber:server">>, _, Server, true} when
 	      StateData#state.tls and (not StateData#state.authenticated) ->
 	    send_text(StateData, ?STREAM_HEADER(<<" version='1.0'">>)),
@@ -221,9 +221,9 @@ wait_for_stream({xmlstreamstart, _Name, Attrs}, StateData) ->
 	    case SASL of
 		{error_cert_verif, CertVerifyResult, Certificate} ->
 		    CertError = tls:get_cert_verify_string(CertVerifyResult, Certificate),
-		    RemoteServer = xml:get_attr_s(<<"from">>, Attrs),
+		    RemoteServer = exml_query:attr(El, <<"from">>),
 		    ?INFO_MSG("Closing s2s connection: ~s <--> ~s (~s)", [StateData#state.server, RemoteServer, CertError]),
-		    send_text(StateData, xml:element_to_string(?SERRT_POLICY_VIOLATION(<<"en">>, CertError))),
+		    send_text(StateData, exml:to_list(?SERRT_POLICY_VIOLATION(<<"en">>, CertError))),
 		    {atomic, Pid} = ejabberd_s2s:find_connection(jlib:make_jid(<<"">>, Server, <<"">>), jlib:make_jid(<<"">>, RemoteServer, <<"">>)),
 		    ejabberd_s2s_out:stop_connection(Pid),
 
@@ -268,11 +268,11 @@ wait_for_stream(closed, StateData) ->
     {stop, normal, StateData}.
 
 
-wait_for_feature_request({xmlelement, Name, Attrs, Els} = El, StateData) ->
+wait_for_feature_request({xmlelement, Name, _Attrs, _Els} = El, StateData) ->
     TLS = StateData#state.tls,
     TLSEnabled = StateData#state.tls_enabled,
     SockMod = (StateData#state.sockmod):get_sockmod(StateData#state.socket),
-    case {xml:get_attr_s(<<"xmlns">>, Attrs), Name} of
+    case {exml_query:attr(El, <<"xmlns">>), Name} of
 	{?NS_TLS, <<"starttls">>} when TLS == true,
 				   TLSEnabled == false,
 				   SockMod == gen_tcp ->
@@ -291,7 +291,7 @@ wait_for_feature_request({xmlelement, Name, Attrs, Els} = El, StateData) ->
 		      end,
 	    TLSSocket = (StateData#state.sockmod):starttls(
 			  Socket, TLSOpts,
-			  xml:element_to_binary(
+			  exml:to_binary(
 			    {xmlelement, <<"proceed">>, [{<<"xmlns">>, ?NS_TLS}], []})),
 	    {next_state, wait_for_stream,
 	     StateData#state{socket = TLSSocket,
@@ -300,10 +300,10 @@ wait_for_feature_request({xmlelement, Name, Attrs, Els} = El, StateData) ->
 			     tls_options = TLSOpts
 			    }};
 	{?NS_SASL, <<"auth">>} when TLSEnabled ->
-	    Mech = xml:get_attr_s(<<"mechanism">>, Attrs),
+	    Mech = exml_query:attr(El, <<"mechanism">>),
 	    case Mech of
 		<<"EXTERNAL">> ->
-		    Auth = jlib:decode_base64(xml:get_cdata(Els)),
+		    Auth = jlib:decode_base64(exml_query:cdata(El)),
 		    AuthDomain = jlib:nameprep(Auth),
 		    AuthRes =
 			case (StateData#state.sockmod):get_peer_certificate(
@@ -430,10 +430,10 @@ stream_established({xmlelement, _, _, _} = El, StateData) ->
 	    {next_state, stream_established, StateData#state{timer = Timer}};
 	_ ->
 	    NewEl = jlib:remove_attr(<<"xmlns">>, El),
-	    {xmlelement, Name, Attrs, _Els} = NewEl,
-	    From_s = xml:get_attr_s(<<"from">>, Attrs),
+	    {xmlelement, Name, _Attrs, _Els} = NewEl,
+	    From_s = exml_query:attr(NewEl, <<"from">>),
 	    From = jlib:binary_to_jid(From_s),
-	    To_s = xml:get_attr_s(<<"to">>, Attrs),
+	    To_s = exml_query:attr(NewEl, <<"to">>),
 	    To = jlib:binary_to_jid(To_s),
 	    if
 		(To /= error) and (From /= error) ->
@@ -647,7 +647,7 @@ send_text(StateData, Text) ->
     (StateData#state.sockmod):send(StateData#state.socket, Text).
 
 send_element(StateData, El) ->
-    send_text(StateData, xml:element_to_binary(El)).
+    send_text(StateData, exml:to_binary(El)).
 
 
 change_shaper(StateData, Host, JID) ->
@@ -668,18 +668,18 @@ cancel_timer(Timer) ->
     end.
 
 
-is_key_packet({xmlelement, Name, Attrs, Els}) when Name == <<"db:result">> ->
+is_key_packet({xmlelement, Name, _Attrs, _Els} = El) when Name == <<"db:result">> ->
     {key,
-     xml:get_attr_s(<<"to">>, Attrs),
-     xml:get_attr_s(<<"from">>, Attrs),
-     xml:get_attr_s(<<"id">>, Attrs),
-     xml:get_cdata(Els)};
-is_key_packet({xmlelement, Name, Attrs, Els}) when Name == <<"db:verify">> ->
+     exml_query:attr(El, <<"to">>),
+     exml_query:attr(El, <<"from">>),
+     exml_query:attr(El, <<"id">>),
+     exml_query:cdata(El)};
+is_key_packet({xmlelement, Name, _Attrs, _Els} = El) when Name == <<"db:verify">> ->
     {verify,
-     xml:get_attr_s(<<"to">>, Attrs),
-     xml:get_attr_s(<<"from">>, Attrs),
-     xml:get_attr_s(<<"id">>, Attrs),
-     xml:get_cdata(Els)};
+     exml_query:attr(El, <<"to">>),
+     exml_query:attr(El, <<"from">>),
+     exml_query:attr(El, <<"id">>),
+     exml_query:cdata(El)};
 is_key_packet(_) ->
     false.
 

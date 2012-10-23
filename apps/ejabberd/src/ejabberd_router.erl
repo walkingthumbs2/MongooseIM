@@ -76,8 +76,8 @@ route(From, To, Packet) ->
 %% Route the error packet only if the originating packet is not an error itself.
 %% RFC3920 9.3.1
 route_error(From, To, ErrPacket, OrigPacket) ->
-    {xmlelement, _Name, Attrs, _Els} = OrigPacket,
-    case <<"error">> == xml:get_attr_s(<<"type">>, Attrs) of
+    {xmlelement, _Name, _Attrs, _Els} = OrigPacket,
+    case <<"error">> == exml_query:attr(OrigPacket, <<"type">>) of
         false ->
             route(From, To, ErrPacket);
         true ->

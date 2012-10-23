@@ -266,7 +266,7 @@ do_route(From, To, Packet) ->
 	    send_element(Pid, {xmlelement, Name, NewAttrs, Els}),
 	    ok;
 	{aborted, _Reason} ->
-	    case xml:get_tag_attr_s(<<"type">>, Packet) of
+	    case exml_query:attr(Packet, <<"type">>) of
 		<<"error">> -> ok;
 		<<"result">> -> ok;
 		_ ->
