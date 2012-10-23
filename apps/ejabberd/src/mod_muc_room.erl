@@ -1519,7 +1519,7 @@ add_new_user(From, Nick, {xmlelement, _, _Attrs, Els} = Packet, StateData) ->
 check_password(owner, _Affiliation, _Els, _From, _StateData) ->
     %% Don't check pass if user is owner in MUC service (access_admin option)
     true;
-check_password(_ServiceAffiliation, Affiliation, Els, From, StateData) ->
+check_password(_ServiceAffiliation, _Affiliation, Els, _From, StateData) ->
     case (StateData#state.config)#config.password_protected of
         false ->
             %% Don't check password
@@ -1664,9 +1664,6 @@ extract_history([{xmlelement, _Name, _Attrs, _SubEls} = El | Els], Type) ->
 extract_history([_ | Els], Type) ->
     extract_history(Els, Type).
 
-
-send_update_presence(JID, StateData) ->
-    send_update_presence(JID, <<>>, StateData).
 
 send_update_presence(JID, Reason, StateData) ->
     LJID = jlib:jid_tolower(JID),
@@ -3296,7 +3293,7 @@ get_mucroom_disco_items(StateData) ->
 %% Handle voice request or approval (XEP-0045 7.13, 8.6)
 check_voice_approval(From, [{xmlelement, <<"x">>, _Attrs, Items}], _Lang, StateData) ->
     GetField = fun(Var) ->
-        lists:foldl(fun({xmlelement,<<"field">>,_Attrs,_Body} = Item, Acc) ->
+        lists:foldl(fun({xmlelement,<<"field">>, _Attrs2, _Body} = Item, Acc) ->
             case exml_query:attr(Item, <<"var">>) of
                 Var -> case exml_query:path(Item, [{element, <<"value">>}, cdata]) of
                     undefined -> Acc;

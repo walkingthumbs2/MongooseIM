@@ -381,8 +381,8 @@ iq_info_internal({xmlelement, Name, _Attrs, Els} = El, Filter) when Name == <<"i
                     {reply, _} ->
                         %% Find the namespace of the first non-error
                         %% element, if there is one.
-                        NonErrorEls = [El ||
-                                          {xmlelement, SubName, _, _} = El
+                        NonErrorEls = [Element ||
+                                          {xmlelement, SubName, _, _} = Element
                                               <- FilteredEls,
                                           SubName /= <<"error">>],
                         {case NonErrorEls of
