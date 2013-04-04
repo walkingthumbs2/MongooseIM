@@ -1,5 +1,5 @@
 ## Name of the node
--sname {{node_name}}
+-name {{node_name}}
 
 ## Cookie for distributed erlang
 -setcookie ejabberd

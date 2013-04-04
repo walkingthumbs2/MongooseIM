@@ -1,4 +1,4 @@
-.PHONY: rel deps test show_test_results generate_snmp_header 
+.PHONY: start rel deps test show_test_results generate_snmp_header 
 
 EJABBERD_DIR = apps/ejabberd
 EJD_INCLUDE = $(EJABBERD_DIR)/include
@@ -9,6 +9,9 @@ DEVNODES = node1 node2
 TESTNODES = internal_mnesia internal_redis odbc_mnesia odbc_redis external_mnesia external_redis
 
 all: deps compile
+
+start: rel
+	./rel/ejabberd/bin/ejabberd start
 
 compile: rebar generate_snmp_header
 	./rebar compile

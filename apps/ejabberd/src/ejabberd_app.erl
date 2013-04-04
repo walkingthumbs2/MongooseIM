@@ -92,6 +92,7 @@ stop(_State) ->
 %%%
 -spec db_init() -> list().
 db_init() ->
+    timer:sleep(10000),
     case mnesia:system_info(extra_db_nodes) of
         [] ->
             application:stop(mnesia),
