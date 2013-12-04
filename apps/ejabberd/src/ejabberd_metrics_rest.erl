@@ -74,7 +74,11 @@ response(Req, #state{cmd=host_metrics}=State) ->
             {ok, NewReq2} = cowboy_req:reply(404, NewReq),
             {halt, NewReq2, State};
         Metrics ->
-            Response = response_json([{metrics, Metrics}]),
+            Memory = folsom_vm_metrics:get_memory(),
+            Statistics = folsom_vm_metrics:get_statistics(),
+            Response = response_json([{metrics, Metrics},
+                                      {memory, Memory},
+                                      {statistics, Statistics}]),
             {Response, NewReq, State}
     end;
 response(Req, #state{cmd=host_metric}=State) ->
