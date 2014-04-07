@@ -378,7 +378,7 @@ handle_stream_event({EventTag, Body, Rid} = Event, Handler,
     NS = maybe_add_handler(Handler, Rid, S),
     NNS = case {EventTag,
                 maybe_is_retransmission(Rid, OldRid, S#state.sent),
-                is_valid_rid(Rid, OldRid),
+                is_next_rid(Rid, OldRid),
                 is_acceptable_rid(Rid, OldRid)}
     of
         {_, {true, CachedResponse}, _, _} ->
@@ -397,8 +397,9 @@ handle_stream_event({EventTag, Body, Rid} = Event, Handler,
                    [{EventTag, Body}]),
             NS#state{deferred = [Event | NS#state.deferred]};
         {_, _, false, false} ->
-            ?ERROR_MSG("invalid rid ~p, expected ~p:~n~p~n",
-                       [Rid, OldRid + 1, {EventTag, Body}]),
+            Diff = abs(Rid - (OldRid +1)),
+            ?ERROR_MSG("invalid rid ~p, expected ~p, difference ~p:~n~p~n",
+                       [Rid, OldRid + 1, Diff, {EventTag, Body}]),
             [Pid ! item_not_found
              || {_, _, Pid} <- lists:sort(NS#state.handlers)],
             throw({invalid_rid, NS#state{handlers = []}})
@@ -533,13 +534,14 @@ process_deferred_events(SName, #state{deferred = Deferred} = S) ->
                 S#state{deferred = []},
                 lists:sort(Deferred)).
 
-is_valid_rid(Rid, OldRid) when Rid == OldRid + 1 ->
+is_next_rid(Rid, OldRid) when Rid == OldRid + 1 ->
     true;
-is_valid_rid(_, _) ->
+is_next_rid(_, _) ->
     false.
 
+%% TODO: consider the window size
 is_acceptable_rid(Rid, OldRid)
-        when Rid > OldRid + 1,
+        when Rid > OldRid + 1, 
              Rid =< OldRid + ?CONCURRENT_REQUESTS ->
     true;
 is_acceptable_rid(_, _) ->
