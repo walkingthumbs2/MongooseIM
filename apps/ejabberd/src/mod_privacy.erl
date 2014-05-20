@@ -36,7 +36,8 @@
      get_user_list/3,
      check_packet/6,
      remove_user/2,
-     updated_list/3]).
+     updated_list/3,
+     is_list_needdb/1]).
 
 -include("ejabberd.hrl").
 -include("jlib.hrl").
@@ -302,6 +303,7 @@ replace_privacy_list(LUser, LServer, Name, List) ->
     end.
 
 is_list_needdb(Items) ->
+    ?INFO_MSG("is_list_needdb Items = ~p",[Items]),
     lists:any(fun is_item_needdb/1, Items).
 
 is_item_needdb(#listitem{type = subscription}) -> true;
