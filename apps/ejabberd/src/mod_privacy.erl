@@ -303,7 +303,6 @@ replace_privacy_list(LUser, LServer, Name, List) ->
     end.
 
 is_list_needdb(Items) ->
-    ?INFO_MSG("is_list_needdb Items = ~p",[Items]),
     lists:any(fun is_item_needdb/1, Items).
 
 is_item_needdb(#listitem{type = subscription}) -> true;
