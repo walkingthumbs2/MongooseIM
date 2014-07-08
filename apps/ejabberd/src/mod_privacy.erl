@@ -36,7 +36,8 @@
      get_user_list/3,
      check_packet/6,
      remove_user/2,
-     updated_list/3]).
+     updated_list/3,
+     is_list_needdb/1]).
 
 -include("ejabberd.hrl").
 -include("jlib.hrl").

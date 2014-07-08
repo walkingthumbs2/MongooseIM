@@ -42,6 +42,18 @@
          replace_privacy_list/4,
          remove_user/2]).
 
+-export([sql_add_privacy_list/2,
+         sql_get_default_privacy_list/2,
+         sql_get_default_privacy_list_t/1,
+         sql_get_privacy_list_data/3,
+         sql_get_privacy_list_data_by_id_t/1,
+         sql_get_privacy_list_id_t/2,
+         sql_set_default_privacy_list/2,
+         sql_set_privacy_list/2,
+         item_to_raw/1,
+         raw_to_item/1]).
+
+
 -include("ejabberd.hrl").
 -include("jlib.hrl").
 -include("mod_privacy.hrl").
@@ -325,6 +337,9 @@ sql_get_privacy_list_data(LUser, LServer, Name) ->
 
 sql_get_privacy_list_data_by_id(ID, LServer) ->
     odbc_queries:get_privacy_list_data_by_id(LServer, ID).
+
+sql_get_privacy_list_data_by_id_t(ID) ->
+    odbc_queries:get_privacy_list_data_by_id_t(ID).
 
 sql_set_default_privacy_list(LUser, Name) ->
     Username = ejabberd_odbc:escape(LUser),
