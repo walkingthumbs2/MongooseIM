@@ -164,7 +164,7 @@ receive_all(US, Msgs) ->
             length(NewMsgs) > 1000 ->
                 NewMsgs;
             true ->
-                receive_all_r(US, [Msg | Msgs])
+                receive_all(US, [Msg | Msgs])
         end
     after 0 ->
         Msgs
