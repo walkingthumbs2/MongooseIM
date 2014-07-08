@@ -43,7 +43,7 @@
          remove_user/2]).
 
 %% Internal exports
--export([start_link/3]).
+-export([start_link/4]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -55,11 +55,14 @@
 
 -define(PROCNAME, ejabberd_offline).
 
-%% default value for the maximum number of user messages
--define(MAX_USER_MESSAGES, infinity).
+%% default value for the maximum number messages in queue
+-define(MAX_MESSAGE_IN_QUEUE, 1000).
+%% default value for the maximum wait time in queue
+-define(MAX_TIMEOUT_IN_QUEUE, 0).
+
 -define(BACKEND, (mod_offline_backend:backend())).
 
--record(state, {host, access_max_user_messages}).
+-record(state, {host, max_message_in_queue, max_timeout_in_queue}).
 
 %% ------------------------------------------------------------------
 %% Backend callbacks
@@ -76,11 +79,11 @@
 %% ------------------------------------------------------------------
 
 start(Host, Opts) ->
-    AccessMaxOfflineMsgs = gen_mod:get_opt(access_max_user_messages, Opts,
-                                           max_user_offline_messages),
+    MaxMessageInQueue = gen_mod:get_opt(max_message_in_queue, Opts, ?MAX_MESSAGE_IN_QUEUE),
+    MaxTimeoutInQueue = gen_mod:get_opt(max_timeout_in_queue, Opts, ?MAX_TIMEOUT_IN_QUEUE),
     start_backend_module(Opts),
     ?BACKEND:init(Host, Opts),
-    start_worker(Host, AccessMaxOfflineMsgs),
+    start_worker(Host, MaxMessageInQueue, MaxTimeoutInQueue),
     ejabberd_hooks:add(offline_message_hook, Host,
 		       ?MODULE, inspect_packet, 50),
     ejabberd_hooks:add(resend_offline_messages_hook, Host,
@@ -132,41 +135,31 @@ mod_offline_backend(Backend) when is_atom(Backend) ->
 %% Server side functions
 %% ------------------------------------------------------------------
 
-handle_offline_msg(#offline_msg{us=US} = Msg, AccessMaxOfflineMsgs) ->
-    {LUser, LServer} = US,
-    Msgs = receive_all(US, [Msg]),
-    MaxOfflineMsgs = get_max_user_messages(
-        AccessMaxOfflineMsgs, LUser, LServer),
-    case ?BACKEND:write_messages(LUser, LServer, Msgs, MaxOfflineMsgs) of
+handle_offline_msg(#offline_msg{us=US} = Msg, MaxMessageInQueue, MaxTimeoutInQueue) ->
+    {_, LServer} = US,
+    Msgs = receive_all([Msg], MaxMessageInQueue, MaxTimeoutInQueue),
+    case ?BACKEND:write_messages(LServer, Msgs) of
         ok ->
             ok;
         {discarded, DiscardedMsgs} ->
             discard_warn_sender(DiscardedMsgs);
         {error, Reason} ->
             ?ERROR_MSG("~ts@~ts: write_messages failed with ~p.",
-                [LUser, LServer, Reason]),
+                [LServer, Reason]),
             discard_warn_sender(Msgs)
     end.
 
-%% Function copied from ejabberd_sm.erl:
-get_max_user_messages(AccessRule, LUser, Host) ->
-    case acl:match_rule(Host, AccessRule, jlib:make_jid(LUser, Host, <<>>)) of
-	Max when is_integer(Max) -> Max;
-	infinity -> infinity;
-	_ -> ?MAX_USER_MESSAGES
-    end.
-
-receive_all(US, Msgs) ->
+receive_all(Msgs, MaxMessageInQueue, MaxTimeoutInQueue) ->
     receive
     Msg ->
         NewMsgs = [Msg | Msgs],
         if
-            length(NewMsgs) > 1000 ->
+            length(NewMsgs) > MaxMessageInQueue ->
                 NewMsgs;
             true ->
-                receive_all(US, [Msg | Msgs])
+                receive_all([Msg | Msgs], MaxMessageInQueue, MaxTimeoutInQueue)
         end
-    after 0 ->
+    after MaxTimeoutInQueue ->
         Msgs
     end.
 
@@ -174,11 +167,11 @@ receive_all(US, Msgs) ->
 %% Supervision
 %% ------------------------------------------------------------------
 
-start_worker(Host, AccessMaxOfflineMsgs) ->
+start_worker(Host, MaxMessageInQueue, MaxTimeoutInQueue) ->
     Proc = srv_name(Host),
     ChildSpec =
     {Proc,
-     {?MODULE, start_link, [Proc, Host, AccessMaxOfflineMsgs]},
+     {?MODULE, start_link, [Proc, Host, MaxMessageInQueue, MaxTimeoutInQueue]},
      permanent,
      5000,
      worker,
@@ -191,8 +184,8 @@ stop_worker(Host) ->
     supervisor:terminate_child(ejabberd_sup, Proc),
     supervisor:delete_child(ejabberd_sup, Proc).
 
-start_link(Name, Host, AccessMaxOfflineMsgs) ->
-    gen_server:start_link({local, Name}, ?MODULE, [Host, AccessMaxOfflineMsgs], []).
+start_link(Name, Host, MaxMessageInQueue, MaxTimeoutInQueue) ->
+    gen_server:start_link({local, Name}, ?MODULE, [Host, MaxMessageInQueue, MaxTimeoutInQueue], []).
 
 srv_name() ->
     mod_offline.
@@ -211,10 +204,11 @@ srv_name(Host) ->
 %%                         {stop, Reason}
 %% Description: Initiates the server
 %%--------------------------------------------------------------------
-init([Host, AccessMaxOfflineMsgs]) ->
+init([Host, MaxMessageInQueue, MaxTimeoutInQueue]) ->
     {ok, #state{
             host = Host,
-            access_max_user_messages = AccessMaxOfflineMsgs}}.
+            max_message_in_queue = MaxMessageInQueue,
+            max_timeout_in_queue = MaxTimeoutInQueue}}.
 
 %%--------------------------------------------------------------------
 %% Function: %% handle_call(Request, From, State) -> {reply, Reply, State} |
@@ -246,8 +240,9 @@ handle_cast(Msg, State) ->
 %% Description: Handling all non call/cast messages
 %%--------------------------------------------------------------------
 handle_info(Msg=#offline_msg{},
-            State=#state{access_max_user_messages = AccessMaxOfflineMsgs}) ->
-    handle_offline_msg(Msg, AccessMaxOfflineMsgs),
+            State=#state{max_message_in_queue = MaxMessageInQueue,
+                max_timeout_in_queue = MaxTimeoutInQueue}) ->
+    handle_offline_msg(Msg, MaxMessageInQueue, MaxTimeoutInQueue),
     {noreply, State};
 handle_info(Msg, State) ->
     ?WARNING_MSG("Strange message ~p.", [Msg]),

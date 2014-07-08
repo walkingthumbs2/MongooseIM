@@ -29,7 +29,7 @@
 
 -export([init/2,
          pop_messages/2,
-         write_messages/4,
+         write_messages/2,
          remove_expired_messages/1,
          remove_old_messages/2,
          remove_user/2]).
@@ -74,37 +74,8 @@ row_to_record(US, To, {STimeStamp, SFrom, SPacket}) ->
              packet = Packet}.
 
 
-write_messages(LUser, LServer, Msgs, MaxOfflineMsgs) ->
-    SUser = ejabberd_odbc:escape(LUser),
-    SServer = ejabberd_odbc:escape(LServer),
-    write_messages_t(LServer, SUser, SServer, Msgs, MaxOfflineMsgs).
-
-write_messages_t(LServer, SUser, SServer, Msgs, MaxOfflineMsgs) ->
-    case is_message_count_threshold_reached(
-                 LServer, SUser, SServer, Msgs, MaxOfflineMsgs) of
-        false ->
-            write_all_messages_t(LServer, SUser, SServer, Msgs);
-        true ->
-            discard_all_messages_t(Msgs)
-    end.
-
-is_message_count_threshold_reached(LServer, SUser, SServer, Msgs, MaxOfflineMsgs) ->
-    Len = length(Msgs),
-    case MaxOfflineMsgs of
-        infinity ->
-            false;
-        MaxOfflineMsgs when Len > MaxOfflineMsgs ->
-            true;
-        MaxOfflineMsgs ->
-            %% Only count messages if needed.
-            MaxArchivedMsg = MaxOfflineMsgs - Len,
-            %% Do not need to count all messages in archive.
-            MaxOfflineMsgs < count_offline_messages(
-                LServer, SUser, SServer, MaxArchivedMsg + 1)
-    end.
-
-write_all_messages_t(LServer, SUser, SServer, Msgs) ->
-    Rows = [record_to_row(SUser, SServer, Msg) || Msg <- Msgs],
+write_messages(LServer, Msgs) ->
+    Rows = [record_to_row(Msg) || Msg <- Msgs],
     case catch odbc_queries:push_offline_messages(LServer, Rows) of
         {updated, _} ->
             ok;
@@ -114,16 +85,15 @@ write_all_messages_t(LServer, SUser, SServer, Msgs) ->
             {error, Reason}
     end.
 
-record_to_row(SUser, SServer, #offline_msg{to = #jid{user = SUserTo, server = SServerTo},
+record_to_row(#offline_msg{to = #jid{user = UserTo, server = ServerTo},
         from = From, packet = Packet, timestamp = TimeStamp, expire = Expire}) ->
+    SUserTo = ejabberd_odbc:escape(UserTo),
+    SServerTo = ejabberd_odbc:escape(ServerTo),
     SFrom = ejabberd_odbc:escape(jlib:jid_to_binary(From)),
     SPacket = ejabberd_odbc:escape(xml:element_to_binary(Packet)),
     STimeStamp = encode_timestamp(TimeStamp),
     SExpire = maybe_encode_timestamp(Expire),
     odbc_queries:prepare_offline_message(SUserTo, SServerTo, STimeStamp, SExpire, SFrom, SPacket).
-
-discard_all_messages_t(Msgs) ->
-    {discarded, Msgs}.
 
 remove_user(LUser, LServer) ->
     SUser   = ejabberd_odbc:escape(LUser),
@@ -139,15 +109,6 @@ remove_old_messages(LServer, Days) ->
     TimeStamp = fallback_timestamp(Days, now()),
     STimeStamp = encode_timestamp(TimeStamp),
     odbc_queries:remove_old_offline_messages(LServer, STimeStamp).
-
-count_offline_messages(LServer, SUser, SServer, Limit) ->
-    case odbc_queries:count_offline_messages(LServer, SUser, SServer, Limit) of
-        {selected, [_], [{Count}]} ->
-            list_to_integer(binary_to_list(Count));
-        Error ->
-            ?ERROR_MSG("count_offline_messages failed ~p", [Error]),
-            0
-    end.
 
 fallback_timestamp(Days, {MegaSecs, Secs, _MicroSecs}) ->
     S = MegaSecs * 1000000 + Secs - 60 * 60 * 24 * Days,
