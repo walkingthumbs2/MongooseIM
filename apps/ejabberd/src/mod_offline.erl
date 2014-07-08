@@ -158,11 +158,18 @@ get_max_user_messages(AccessRule, LUser, Host) ->
 
 receive_all(US, Msgs) ->
     receive
-	#offline_msg{us=US} = Msg ->
-	    receive_all(US, [Msg | Msgs])
+    Msg ->
+        NewMsgs = [Msg | Msgs],
+        if
+            length(NewMsgs) > 1000 ->
+                NewMsgs;
+            true ->
+                receive_all_r(US, [Msg | Msgs])
+        end
     after 0 ->
-	    Msgs
+        Msgs
     end.
+
 
 %% Supervision
 %% ------------------------------------------------------------------
