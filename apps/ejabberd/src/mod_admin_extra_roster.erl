@@ -296,7 +296,7 @@ build_broadcast(U, S, remove) ->
 %% @spec (U::binary(), S::binary(), Subs::atom()) -> any()
 %% Subs = both | from | to | none
 build_broadcast(U, S, SubsAtom) when is_atom(SubsAtom) ->
-    #xmlel{ name = <<"broadcast">>, children = [{item, {U, S, ""}, SubsAtom}] }.
+    #xmlel{ name = <<"broadcast">>, children = [{item, {U, S, <<"">>}, SubsAtom}] }.
 
 %%-----------------------------
 %% Purge roster items
