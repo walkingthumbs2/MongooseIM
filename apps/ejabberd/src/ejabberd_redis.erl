@@ -24,7 +24,7 @@ start_link(Opts) ->
                            {ejabberd_redis_sup,
                             {cuesport, start_link,
                              [?POOL_NAME, PoolSize, ChildMods, ChildMFA]},
-                            transient, 2000, supervisor, [cuesport | ChildMods]}).
+                            transient, 20000, supervisor, [cuesport | ChildMods]}).
 
 -spec cmd(iolist()) -> iolist() | integer().
 cmd(Cmd) ->
