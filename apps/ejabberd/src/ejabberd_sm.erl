@@ -1,4 +1,3 @@
-%%%----------------------------------------------------------------------
 %%% File    : ejabberd_sm.erl
 %%% Author  : Alexey Shchepin <alexey@process-one.net>
 %%% Purpose : Session manager
@@ -52,7 +51,8 @@
          user_resources/2,
          get_session_pid/3,
          get_session/3,
-         get_session_ip/3
+         get_session_ip/3,
+         cleanup/1
         ]).
 
 %% gen_server callbacks
@@ -331,6 +331,13 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+%% Func: cleanup(Node) 
+%% Description: ensure that all session data has been removed
+%% Note: this method will remove all session data for the specified node
+
+cleanup(Node) ->
+  ?SM_BACKEND:cleanup(Node).
+
 %%--------------------------------------------------------------------
 %%% Internal functions
 %%--------------------------------------------------------------------
@@ -433,7 +440,6 @@ broadcast_packet(From, To, Packet) ->
                        jlib:jid_replace_resource(To, R),
                        Packet)
       end, get_user_resources(User, Server)).
-
 %% The default list applies to the user as a whole,
 %% and is processed if there is no active list set
 %% for the target session/resource to which a stanza is addressed,

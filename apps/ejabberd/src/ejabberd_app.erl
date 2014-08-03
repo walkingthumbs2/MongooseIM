@@ -83,6 +83,7 @@ prep_stop(State) ->
     stop_modules(),
     broadcast_c2s_shutdown(),
     mod_websockets:stop(),
+    ejabberd_sm:cleanup(node()),
     timer:sleep(5000),
     State.
 

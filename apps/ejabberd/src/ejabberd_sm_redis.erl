@@ -77,12 +77,14 @@ get_sessions(User, Server, Resource) ->
 
 -spec create_session(binary(), binary(), binary(), #session{}) -> ok | {error, term()}.
 create_session(User, Server, Resource, Session) ->
+    
     OldSessions = get_sessions(User, Server, Resource),
     BSession = term_to_binary(Session),
+    ?INFO_MSG("create session ~p ~p ~p",[User,Server,Resource]),
     case lists:keysearch(Session#session.sid, #session.sid, OldSessions) of
         {value, OldSession} ->
             BOldSession = term_to_binary(OldSession),
-
+            ?INFO_MSG("remove existing session  ~p ~p ~p",[User,Server,Resource]),   
             ejabberd_redis:cmd([["SADD", n(node()), hash(User, Server, Resource, Session#session.sid)],
                                 ["SREM", hash(User, Server), BOldSession],
                                 ["SREM", hash(User, Server, Resource), BOldSession],
@@ -96,6 +98,7 @@ create_session(User, Server, Resource, Session) ->
 
 -spec delete_session(tuple(), binary(), binary(), binary()) -> ok.
 delete_session(SID, User, Server, Resource) ->
+    ?INFO_MSG("remove session ~p ~p ~p",[User,Server,Resource]),
     Sessions = get_sessions(User, Server, Resource),
     case lists:keysearch(SID, #session.sid, Sessions) of
         {value, Session} ->
@@ -110,12 +113,14 @@ delete_session(SID, User, Server, Resource) ->
 
 -spec cleanup(atom()) -> ok.
 cleanup(Node) ->
-    Hashes = ejabberd_redis:cmd(["SMEMBERS", n(Node)]),
-    ejabberd_redis:cmd(["DEL", n(Node)]),
+     ?INFO_MSG("Clean redis session info called for node: ~p",[Node]),
+     Hashes = ejabberd_redis:cmd(["SMEMBERS", n(Node)]),
     lists:foreach(fun(H) ->
-                          [_, U, S, R | SID] = re:split(H, ":"),
-                          delete_session(SID, U, S, R)
-                  end, Hashes).
+                          [_, U, S, R , BSID] = re:split(H, ":",[{parts,5}]),
+                          SID = binary_to_term(BSID),
+			  delete_session(SID, U, S, R)
+                  end, Hashes),
+    ejabberd_redis:cmd(["DEL", n(Node)]).
 
 -spec total_count() -> integer().
 total_count() ->
