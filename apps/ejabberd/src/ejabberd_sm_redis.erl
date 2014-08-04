@@ -80,33 +80,36 @@ create_session(User, Server, Resource, Session) ->
     
     OldSessions = get_sessions(User, Server, Resource),
     BSession = term_to_binary(Session),
-    ?INFO_MSG("create session ~p ~p ~p",[User,Server,Resource]),
     case lists:keysearch(Session#session.sid, #session.sid, OldSessions) of
         {value, OldSession} ->
             BOldSession = term_to_binary(OldSession),
-            ?INFO_MSG("remove existing session  ~p ~p ~p",[User,Server,Resource]),   
-            ejabberd_redis:cmd([["SADD", n(node()), hash(User, Server, Resource, Session#session.sid)],
-                                ["SREM", hash(User, Server), BOldSession],
+            ejabberd_redis:cmd([["MULTI"],
+        			["SADD", hash(User, Server), BSession],
+                                ["SADD", hash(User, Server, Resource), BSession],
+ 				["SREM", hash(User, Server), BOldSession],
                                 ["SREM", hash(User, Server, Resource), BOldSession],
-                                ["SADD", hash(User, Server), BSession],
-                                ["SADD", hash(User, Server, Resource), BSession]]);
+				["EXEC"]
+				]);
         false ->
-            ejabberd_redis:cmd([["SADD", n(node()), hash(User, Server, Resource, Session#session.sid)],
+            ejabberd_redis:cmd([["MULTI"],
+				["SADD", n(node()), hash(User, Server, Resource, Session#session.sid)],
                                 ["SADD", hash(User, Server), BSession],
-                                ["SADD", hash(User, Server, Resource), BSession]])
+                                ["SADD", hash(User, Server, Resource), BSession],
+				["EXEC"]])
     end.
 
 -spec delete_session(tuple(), binary(), binary(), binary()) -> ok.
 delete_session(SID, User, Server, Resource) ->
-    ?INFO_MSG("remove session ~p ~p ~p",[User,Server,Resource]),
     Sessions = get_sessions(User, Server, Resource),
     case lists:keysearch(SID, #session.sid, Sessions) of
         {value, Session} ->
             BSession = term_to_binary(Session),
-
-            ejabberd_redis:cmd([["SREM", hash(User, Server), BSession],
+            ejabberd_redis:cmd([["MULTI"],
+				["SREM", hash(User, Server), BSession],
                                 ["SREM", hash(User, Server, Resource), BSession],
-                                ["SREM", n(node()), hash(User, Server, Resource, SID)]]);
+                                ["SREM", n(node()), hash(User, Server, Resource, SID)],
+				["EXEC"]
+				]);
         false ->
             ok
     end.
