@@ -1441,9 +1441,7 @@ terminate(_Reason, StateName, StateData) ->
 			       jlib:jid_to_binary(StateData#state.jid)]),
 		    From = StateData#state.jid,
 		    Packet = #xmlel{name = <<"presence">>,
-			            attrs = [{<<"type">>, <<"unavailable">>}],
-			            children = [#xmlel{name = <<"status">>,
-				                       children = [#xmlcdata{content = "Replaced by new connection"}]}]},
+			            attrs = [{<<"type">>, <<"unavailable">>}]},
 		    ejabberd_sm:close_session_unset_presence(
 		      StateData#state.sid,
 		      StateData#state.user,
