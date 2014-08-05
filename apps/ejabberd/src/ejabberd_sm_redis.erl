@@ -83,19 +83,24 @@ create_session(User, Server, Resource, Session) ->
     case lists:keysearch(Session#session.sid, #session.sid, OldSessions) of
         {value, OldSession} ->
             BOldSession = term_to_binary(OldSession),
-            ejabberd_redis:cmd([["MULTI"],
-        			["SADD", hash(User, Server), BSession],
-                                ["SADD", hash(User, Server, Resource), BSession],
- 				["SREM", hash(User, Server), BOldSession],
-                                ["SREM", hash(User, Server, Resource), BOldSession],
-				["EXEC"]
-				]);
+            case BOldSession of  
+              OldSession ->
+                ok;
+              _ ->
+                ejabberd_redis:cmd([["MULTI"],
+                  ["SREM", hash(User, Server), BOldSession],
+                  ["SREM", hash(User, Server, Resource), BOldSession],          
+            			["SADD", hash(User, Server), BSession],
+                  ["SADD", hash(User, Server, Resource), BSession],
+        				  ["EXEC"]])
+              end;
         false ->
             ejabberd_redis:cmd([["MULTI"],
 				["SADD", n(node()), hash(User, Server, Resource, Session#session.sid)],
                                 ["SADD", hash(User, Server), BSession],
                                 ["SADD", hash(User, Server, Resource), BSession],
-				["EXEC"]])
+				["EXEC"]
+        ])
     end.
 
 -spec delete_session(tuple(), binary(), binary(), binary()) -> ok.
