@@ -744,25 +744,42 @@ set_roster_version(LUser, Version) ->
 
 pop_offline_messages(LServer, SUser, SServer, STimeStamp) ->
     SelectSQL = select_offline_messages_sql(SUser, SServer, STimeStamp),
-    DeleteSQL = delete_offline_messages_sql(SUser, SServer),
+
+    
     F = fun() ->
 	      Res = ejabberd_odbc:sql_query_t(SelectSQL),
-          ejabberd_odbc:sql_query_t(DeleteSQL),
-          Res
+          
+          % The select was changed to return ids so we can delete only the rows we retrieved
+          {selected, Fields, Rows} = Res,
+          FilteredFields = tl(Fields),
+
+          case length(Rows) of 
+            0 ->
+              {selected, FilteredFields, []};
+            _ ->
+              IDs = lists:map(fun({Id, _, _, _}) -> Id end, Rows),
+              DeleteSQL = delete_offline_messages_sql(SUser, SServer, IDs),
+              ejabberd_odbc:sql_query_t(DeleteSQL),
+
+              % The invokers of this function don't expect to get the id so it is filtered out
+              FilteredRows = lists:map(fun({_, Ts, FJid, Packet}) -> {Ts, FJid, Packet} end, Rows),
+              {selected, FilteredFields, FilteredRows}
+          end
         end,
     ejabberd_odbc:sql_transaction(LServer, F).
 
 select_offline_messages_sql(SUser, SServer, STimeStamp) ->
-    [<<"select timestamp, from_jid, packet from offline_message "
+    [<<"select id, timestamp, from_jid, packet from offline_message "
             "where server = '">>, SServer, <<"' and "
                   "username = '">>, SUser, <<"' and "
                   "(expire is null or expire > ">>, STimeStamp, <<") "
              "ORDER BY timestamp">>].
 
-delete_offline_messages_sql(SUser, SServer) ->
+delete_offline_messages_sql(SUser, SServer, IDs) ->
     [<<"delete from offline_message "
             "where server = '">>, SServer, <<"' and "
-                  "username = '">>, SUser, <<"'">>].
+            "username = '">>, SUser, <<"' ">>,
+            <<"and id in (">>, lists:flatten(join(IDs, ", ")), <<")">>].
 
 remove_old_offline_messages(LServer, STimeStamp) ->
     ejabberd_odbc:sql_query(
