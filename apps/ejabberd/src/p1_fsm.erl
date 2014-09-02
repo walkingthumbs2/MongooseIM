@@ -135,6 +135,8 @@
 	 system_code_change/4,
 	 format_status/2]).
 
+-include("ejabberd.hrl").
+
 -import(error_logger , [format/2]).
 
 %%% Internal gen_fsm state
@@ -395,7 +397,7 @@ loop(Parent, Name, StateName, StateData, Mod, Time, Debug,
 	{process_limit, Limit} ->
 	    Reason = {process_limit, Limit},
 	    Msg = {'EXIT', Parent, {error, {process_limit, Limit}}},
-	    terminate(Reason, Name, Msg, Mod, StateName, StateData, Debug)
+	    terminate(Reason, Name, Msg, Mod, StateName, StateData, Debug, Queue, QueueLen)
     end,
     process_message(Parent, Name, StateName, StateData,
 		    Mod, Time, Debug, Limits, Queue, QueueLen).
@@ -430,7 +432,6 @@ collect_messages(Queue, QueueLen, Time) ->
 	    end
     end.
 
-
 wake_hib(Parent, Name, StateName, StateData, Mod, Debug,
 	 Limits) ->
     Msg = receive
@@ -451,7 +452,7 @@ decode_msg(Msg,Parent, Name, StateName, StateData, Mod, Time, Debug,
 				  [Name, StateName, StateData,
 				   Mod, Time, Limits, Queue, QueueLen], Hib);
 	{'EXIT', Parent, Reason} ->
-	    terminate(Reason, Name, Msg, Mod, StateName, StateData, Debug);
+	    terminate(Reason, Name, Msg, Mod, StateName, StateData, Debug, Queue, QueueLen);
 	_Msg when Debug == [] ->
 	    handle_msg(Msg, Parent, Name, StateName, StateData,
 		       Mod, Time, Limits, Queue, QueueLen);
@@ -472,7 +473,7 @@ system_continue(Parent, Debug, [Name, StateName, StateData,
 
 system_terminate(Reason, _Parent, Debug,
 		 [Name, StateName, StateData, Mod, _Time, _Limits]) ->
-    terminate(Reason, Name, [], Mod, StateName, StateData, Debug).
+    terminate(Reason, Name, [], Mod, StateName, StateData, Debug, null, 0).
 
 system_code_change([Name, StateName, StateData, Mod, Time,
 		    Limits, Queue, QueueLen],
@@ -536,6 +537,26 @@ relay_messages(MRef, TRef, Clone) ->
 	    relay_messages(MRef, TRef, Clone)
     end.
 
+bounce_messages(Queue) ->
+    case queue:is_queue(Queue) of 
+        true ->
+            case queue:out(Queue) of
+            {{value, Msg}, Queue1} ->
+                case Msg of 
+                    {route, From, To, El}  ->
+                        ?INFO_MSG("Bouncing message: ~p", [El]),
+                        ejabberd_router:route(From, To, El),
+                        bounce_messages(Queue1);
+                    _ ->
+                        bounce_messages(Queue1)
+                end;
+            {empty, _} ->
+                ok
+            end;
+        false ->
+            ok
+    end.
+
 handle_msg(Msg, Parent, Name, StateName, StateData, Mod, _Time,
 	   Limits, Queue, QueueLen) -> %No debug here
     From = from(Msg),
@@ -570,19 +591,19 @@ handle_msg(Msg, Parent, Name, StateName, StateData, Mod, _Time,
 			 Reply ->
 			     {migration_error, {bad_reply, Reply}}
 		     end,
-	    terminate(Reason, Name, Msg, Mod, StateName, NStateData, []);
+	    terminate(Reason, Name, Msg, Mod, StateName, NStateData, [], Queue, QueueLen);
 	{stop, Reason, NStateData} ->
-	    terminate(Reason, Name, Msg, Mod, StateName, NStateData, []);
+	    terminate(Reason, Name, Msg, Mod, StateName, NStateData, [],  Queue, QueueLen);
 	{stop, Reason, Reply, NStateData} when From =/= undefined ->
 	    {'EXIT', R} = (catch terminate(Reason, Name, Msg, Mod,
-					   StateName, NStateData, [])),
+					   StateName, NStateData, [],  Queue, QueueLen)),
 	    reply(From, Reply),
 	    exit(R);
 	{'EXIT', What} ->
-	    terminate(What, Name, Msg, Mod, StateName, StateData, []);
+	    terminate(What, Name, Msg, Mod, StateName, StateData, [],  Queue, QueueLen);
 	Reply ->
 	    terminate({bad_return_value, Reply},
-		      Name, Msg, Mod, StateName, StateData, [])
+		      Name, Msg, Mod, StateName, StateData, [],  Queue, QueueLen)
     end.
 
 handle_msg(Msg, Parent, Name, StateName, StateData,
@@ -623,19 +644,19 @@ handle_msg(Msg, Parent, Name, StateName, StateData,
 			 Reply ->
 			     {migration_error, {bad_reply, Reply}}
 		     end,
-	    terminate(Reason, Name, Msg, Mod, StateName, NStateData, Debug);
+	    terminate(Reason, Name, Msg, Mod, StateName, NStateData, Debug, Queue, QueueLen);
 	{stop, Reason, NStateData} ->
-	    terminate(Reason, Name, Msg, Mod, StateName, NStateData, Debug);
+	    terminate(Reason, Name, Msg, Mod, StateName, NStateData, Debug, Queue, QueueLen);
 	{stop, Reason, Reply, NStateData} when From =/= undefined ->
 	    {'EXIT', R} = (catch terminate(Reason, Name, Msg, Mod,
-					   StateName, NStateData, Debug)),
+					   StateName, NStateData, Debug, Queue, QueueLen)),
 	    reply(Name, From, Reply, Debug, StateName),
 	    exit(R);
 	{'EXIT', What} ->
-	    terminate(What, Name, Msg, Mod, StateName, StateData, Debug);
+	    terminate(What, Name, Msg, Mod, StateName, StateData, Debug, Queue, QueueLen);
 	Reply ->
 	    terminate({bad_return_value, Reply},
-		      Name, Msg, Mod, StateName, StateData, Debug)
+		      Name, Msg, Mod, StateName, StateData, Debug, Queue, QueueLen)
     end.
 
 dispatch({'$gen_event', Event}, Mod, StateName, StateData) ->
@@ -671,30 +692,34 @@ reply(Name, {To, Tag}, Reply, Debug, StateName) ->
 %%% Terminate the server.
 %%% ---------------------------------------------------
 
-terminate(Reason, Name, Msg, Mod, StateName, StateData, Debug) ->
-    case catch Mod:terminate(Reason, StateName, StateData) of
+terminate(Reason, Name, Msg, Mod, StateName, StateData, Debug, Queue, _QueueLen) ->
+
+    Reason2 = case catch Mod:terminate(Reason, StateName, StateData) of
 	{'EXIT', R} ->
 	    error_info(Mod, R, Name, Msg, StateName, StateData, Debug),
-	    exit(R);
+	    R;
 	_ ->
 	    case Reason of
 		normal ->
-		    exit(normal);
+		    normal;
 		shutdown ->
-		    exit(shutdown);
+		    shutdown;
 		priority_shutdown ->
 		    %% Priority shutdown should be considered as
 		    %% shutdown by SASL
-		    exit(shutdown);
+
+		    shutdown;
 		{process_limit, _Limit} ->
-		    exit(Reason);
+		    Reason;
 		{migrated, _Clone} ->
-		    exit(normal);
+            normal;
 		_ ->
 		    error_info(Mod, Reason, Name, Msg, StateName, StateData, Debug),
-		    exit(Reason)
+		    Reason
 	    end
-    end.
+    end,
+    bounce_messages(Queue),
+    exit(Reason2).
 
 error_info(Mod, Reason, Name, Msg, StateName, StateData, Debug) ->
     Reason1 =
