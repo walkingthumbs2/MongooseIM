@@ -102,7 +102,8 @@
 		auth_module = unknown,
 		ip,
 		aux_fields = [],
-		lang}).
+		lang,
+		failed_route}).
 
 %-define(DBGFSM, true).
 
@@ -1353,12 +1354,18 @@ handle_info({route, From, To, Packet}, StateName, StateData) ->
 						jlib:jid_to_binary(To),
 						NewAttrs),
 	    FixedPacket = Packet#xmlel{attrs = Attrs2},
-	    send_element(StateData, FixedPacket),
-	    ejabberd_hooks:run(user_receive_packet,
+	    case catch send_element(StateData, FixedPacket) of
+	    	{'EXIT', normal} ->
+	    		?DEBUG("send_element failed!", []),
+	    		NewState2 = StateData#state{failed_route={From, To, Packet}},
+	    		{stop, normal, NewState2};
+	    	ok ->
+	    		ejabberd_hooks:run(user_receive_packet,
 			       StateData#state.server,
 			       [StateData#state.jid, From, To, FixedPacket]),
-	    ejabberd_hooks:run(c2s_loop_debug, [{route, From, To, Packet}]),
-	    fsm_next_state(StateName, NewState);
+	   			ejabberd_hooks:run(c2s_loop_debug, [{route, From, To, Packet}]),
+	    		fsm_next_state(StateName, NewState)
+	    end;
 	true ->
 	    ejabberd_hooks:run(c2s_loop_debug, [{route, From, To, Packet}]),
 	    fsm_next_state(StateName, NewState)
@@ -1432,7 +1439,10 @@ print_state(State = #state{pres_t = T, pres_f = F, pres_a = A, pres_i = I}) ->
 %% Returns: any
 %%----------------------------------------------------------------------
 terminate(_Reason, StateName, StateData) ->
-    case StateName of
+
+    ?DEBUG("Session state: ~p", [StateName]),
+
+    case StateName of	
 	session_established ->
 	    case StateData#state.authenticated of
 		replaced ->
@@ -1483,6 +1493,15 @@ terminate(_Reason, StateName, StateData) ->
 			      StateData, From, StateData#state.pres_i, Packet)
 		    end
 	    end,
+
+	    case StateData#state.failed_route of 
+	    	{F, T, P} ->
+	    		?INFO_MSG("Rerouting failed message: ~p", [P]),
+	    		ejabberd_router:route(F, T, P);
+	    	_ -> 
+	    		ok
+	    end,
+
 	    bounce_messages();
 	_ ->
 	    ok
